@@ -54,16 +54,12 @@ class TestCookieManagerInit:
 class TestCookieValidation:
     """Tests for cookie format validation."""
 
-    def test_validate_cookie_format_with_valid_cookie(
-        self, cookie_manager: CookieManager
-    ) -> None:
+    def test_validate_cookie_format_with_valid_cookie(self, cookie_manager: CookieManager) -> None:
         """Test that a valid cookie passes validation."""
         valid_cookie = "AQEDAQNhS28F1234AbCdEfGhIjKlMnOpQrStUvWxYz"
         assert cookie_manager.validate_cookie_format(valid_cookie) is True
 
-    def test_validate_cookie_format_with_empty_string(
-        self, cookie_manager: CookieManager
-    ) -> None:
+    def test_validate_cookie_format_with_empty_string(self, cookie_manager: CookieManager) -> None:
         """Test that an empty string fails validation."""
         assert cookie_manager.validate_cookie_format("") is False
 
@@ -98,9 +94,7 @@ class TestStoreCookie:
         cookie = "AQEDAQNhS28F1234test_cookie_value"
         cookie_manager.store_cookie(cookie)
 
-        mock_keyring.set_password.assert_called_once_with(
-            "linkedin-scraper", "default", cookie
-        )
+        mock_keyring.set_password.assert_called_once_with("linkedin-scraper", "default", cookie)
 
     def test_store_cookie_with_custom_account_name(
         self, cookie_manager: CookieManager, mock_keyring: MagicMock
@@ -109,9 +103,7 @@ class TestStoreCookie:
         cookie = "AQEDAQNhS28F1234test_cookie_value"
         cookie_manager.store_cookie(cookie, account_name="work")
 
-        mock_keyring.set_password.assert_called_once_with(
-            "linkedin-scraper", "work", cookie
-        )
+        mock_keyring.set_password.assert_called_once_with("linkedin-scraper", "work", cookie)
 
     def test_store_cookie_adds_account_to_list(
         self, cookie_manager: CookieManager, temp_accounts_file: Path, mock_keyring: MagicMock
@@ -272,9 +264,7 @@ class TestAccountsFilePersistence:
         assert "accounts" in data
         assert "testaccount" in data["accounts"]
 
-    def test_accounts_file_directory_created_if_missing(
-        self, mock_keyring: MagicMock
-    ) -> None:
+    def test_accounts_file_directory_created_if_missing(self, mock_keyring: MagicMock) -> None:
         """Test that parent directories are created if they don't exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             accounts_file = Path(tmpdir) / "nested" / "dir" / "accounts.json"
