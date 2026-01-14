@@ -38,6 +38,11 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 
+[[tool.mypy.overrides]]
+module = "linkedin_api"
+ignore_missing_imports = true
+follow_untyped_imports = false
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true

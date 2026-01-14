@@ -1,0 +1,102 @@
+# ABOUTME: LinkedIn API client wrapper for authenticated operations.
+# ABOUTME: Wraps linkedin-api library and provides clean interface with proper error handling.
+
+from typing import Any
+
+from linkedin_api import Linkedin
+
+from linkedin_scraper.linkedin.exceptions import (
+    LinkedInAuthError,
+    LinkedInError,
+    LinkedInRateLimitError,
+)
+
+
+class LinkedInClient:
+    """Wrapper around linkedin-api library for authenticated LinkedIn operations."""
+
+    def __init__(self, cookie: str) -> None:
+        """Create an authenticated LinkedIn client using a li_at cookie.
+
+        Args:
+            cookie: The li_at cookie value for authentication.
+
+        Raises:
+            LinkedInAuthError: If the cookie is invalid or authentication fails.
+            LinkedInRateLimitError: If LinkedIn rate limiting is triggered.
+            LinkedInError: For other unexpected errors.
+        """
+        try:
+            self._client: Linkedin = Linkedin(
+                cookies={"li_at": cookie},
+                refresh_cookies=False,
+            )
+        except Exception as e:
+            raise self._wrap_exception(e) from e
+
+    def validate_session(self) -> bool:
+        """Test if the current session is valid by making a simple API call.
+
+        Returns:
+            True if the session is valid, False otherwise.
+        """
+        try:
+            profile = self._client.get_user_profile()
+            return profile is not None and len(profile) > 0
+        except Exception:
+            return False
+
+    def get_profile_id(self) -> str | None:
+        """Get the logged-in user's profile ID (public identifier).
+
+        Returns:
+            The user's public profile identifier, or None if it cannot be retrieved.
+        """
+        try:
+            profile = self._client.get_user_profile()
+            if not profile:
+                return None
+
+            mini_profile = profile.get("miniProfile")
+            if isinstance(mini_profile, dict):
+                public_id = mini_profile.get("publicIdentifier")
+                if public_id:
+                    return str(public_id)
+
+            return None
+        except Exception:
+            return None
+
+    def _wrap_exception(self, exception: Exception) -> LinkedInError:
+        """Convert a generic exception to the appropriate LinkedIn exception type.
+
+        Args:
+            exception: The original exception from the linkedin-api library.
+
+        Returns:
+            The appropriate LinkedInError subclass for the exception.
+        """
+        error_message = str(exception).lower()
+
+        if "429" in error_message or "rate" in error_message:
+            return LinkedInRateLimitError(str(exception))
+
+        if (
+            "401" in error_message
+            or "unauthorized" in error_message
+            or "challenge" in error_message
+            or "auth" in error_message
+        ):
+            return LinkedInAuthError(str(exception))
+
+        return LinkedInError(str(exception))
+
+    def _get_raw_client(self) -> Any:
+        """Get the underlying linkedin-api client for advanced operations.
+
+        This is intended for internal use by other modules that need direct access.
+
+        Returns:
+            The underlying Linkedin client instance.
+        """
+        return self._client
