@@ -195,3 +195,169 @@ class TestLinkedInClientErrorHandling:
 
         with pytest.raises(LinkedInError):
             LinkedInClient(cookie="test_cookie")
+
+
+class TestLinkedInClientSearchPeople:
+    """Tests for LinkedInClient.search_people method."""
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_keywords_only(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should call underlying API with keywords."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = [
+            {"urn_id": "abc123", "name": "John Doe"},
+            {"urn_id": "def456", "name": "Jane Smith"},
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(keywords="software engineer")
+        results = client.search_people(search_filter)
+
+        assert len(results) == 2
+        mock_instance.search_people.assert_called_once()
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["keywords"] == "software engineer"
+        assert call_kwargs["limit"] == 100
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_company_ids(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should pass company IDs to underlying API."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(
+            keywords="engineer",
+            current_company_ids=["12345", "67890"],
+        )
+        client.search_people(search_filter)
+
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["current_company"] == ["12345", "67890"]
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_network_depths(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should convert NetworkDepth enums to API format."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import NetworkDepth, SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(
+            keywords="manager",
+            network_depths=[NetworkDepth.FIRST, NetworkDepth.SECOND],
+        )
+        client.search_people(search_filter)
+
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["network_depths"] == ["F", "S"]
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_regions(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should pass region filters to underlying API."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(
+            keywords="developer",
+            regions=["us:0", "uk:0"],
+        )
+        client.search_people(search_filter)
+
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["regions"] == ["us:0", "uk:0"]
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_custom_limit(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should respect custom result limit."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(keywords="analyst", limit=50)
+        client.search_people(search_filter)
+
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["limit"] == 50
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_returns_raw_dicts(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should return raw result dictionaries."""
+        expected_results = [
+            {
+                "urn_id": "ACoAABCDEFG",
+                "public_id": "johndoe",
+                "distance": "DISTANCE_1",
+                "jobtitle": "Senior Engineer",
+                "location": "San Francisco, CA",
+                "name": "John Doe",
+            },
+        ]
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = expected_results
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(keywords="engineer")
+        results = client.search_people(search_filter)
+
+        assert results == expected_results
+        assert results[0]["urn_id"] == "ACoAABCDEFG"
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_handles_api_error(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should wrap API errors appropriately."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.side_effect = Exception("429 Rate limited")
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(keywords="engineer")
+
+        with pytest.raises(LinkedInRateLimitError):
+            client.search_people(search_filter)
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_people_with_all_filters(self, mock_linkedin_class: MagicMock) -> None:
+        """search_people should pass all filter parameters correctly."""
+        mock_instance = MagicMock()
+        mock_instance.search_people.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        from linkedin_scraper.search.filters import NetworkDepth, SearchFilter
+
+        client = LinkedInClient(cookie="test_cookie")
+        search_filter = SearchFilter(
+            keywords="product manager",
+            network_depths=[NetworkDepth.FIRST, NetworkDepth.SECOND, NetworkDepth.THIRD],
+            current_company_ids=["111", "222"],
+            regions=["us:0"],
+            limit=200,
+        )
+        client.search_people(search_filter)
+
+        call_kwargs = mock_instance.search_people.call_args.kwargs
+        assert call_kwargs["keywords"] == "product manager"
+        assert call_kwargs["network_depths"] == ["F", "S", "O"]
+        assert call_kwargs["current_company"] == ["111", "222"]
+        assert call_kwargs["regions"] == ["us:0"]
+        assert call_kwargs["limit"] == 200

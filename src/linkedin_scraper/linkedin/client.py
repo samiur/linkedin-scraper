@@ -1,7 +1,7 @@
 # ABOUTME: LinkedIn API client wrapper for authenticated operations.
 # ABOUTME: Wraps linkedin-api library and provides clean interface with proper error handling.
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from linkedin_api import Linkedin
 
@@ -10,6 +10,9 @@ from linkedin_scraper.linkedin.exceptions import (
     LinkedInError,
     LinkedInRateLimitError,
 )
+
+if TYPE_CHECKING:
+    from linkedin_scraper.search.filters import SearchFilter
 
 
 class LinkedInClient:
@@ -100,3 +103,33 @@ class LinkedInClient:
             The underlying Linkedin client instance.
         """
         return self._client
+
+    def search_people(self, filter: "SearchFilter") -> list[dict[str, Any]]:
+        """Search for people on LinkedIn based on filter criteria.
+
+        Args:
+            filter: SearchFilter containing search parameters like keywords,
+                company IDs, network depths, regions, and result limit.
+
+        Returns:
+            List of raw result dictionaries from the LinkedIn API.
+
+        Raises:
+            LinkedInAuthError: If authentication has expired.
+            LinkedInRateLimitError: If LinkedIn rate limiting is triggered.
+            LinkedInError: For other unexpected errors.
+        """
+        try:
+            # Convert NetworkDepth enums to string values expected by linkedin-api
+            network_depths = [depth.value for depth in filter.network_depths]
+
+            results: list[dict[str, Any]] = self._client.search_people(
+                keywords=filter.keywords,
+                current_company=filter.current_company_ids,
+                network_depths=network_depths,
+                regions=filter.regions,
+                limit=filter.limit,
+            )
+            return results
+        except Exception as e:
+            raise self._wrap_exception(e) from e
