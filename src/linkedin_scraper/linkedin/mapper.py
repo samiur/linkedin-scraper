@@ -91,3 +91,47 @@ def _parse_connection_degree(distance: str | None) -> int:
     }
 
     return distance_mapping.get(distance, 3)
+
+
+def map_company_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Map a LinkedIn company search result to a standardized dictionary.
+
+    Args:
+        result: Raw dictionary from linkedin-api search_companies response.
+
+    Returns:
+        Dictionary containing:
+            - company_id: Numeric company ID (extracted from URN)
+            - name: Company name
+            - industry: Industry classification (if available)
+            - employee_count: Number of employees (if available)
+    """
+    urn_id = result.get("urn_id", "")
+    company_id = _extract_company_id_from_urn(urn_id)
+
+    return {
+        "company_id": company_id,
+        "name": result.get("name"),
+        "industry": result.get("industry"),
+        "employee_count": result.get("staff_count"),
+    }
+
+
+def _extract_company_id_from_urn(urn: str) -> str | None:
+    """Extract the numeric company ID from a LinkedIn URN.
+
+    Args:
+        urn: A LinkedIn URN string (e.g., "urn:li:company:1441") or plain ID.
+
+    Returns:
+        The numeric company ID, or None if the URN is empty/invalid.
+    """
+    if not urn:
+        return None
+
+    # Handle URN format like "urn:li:company:1441"
+    if urn.startswith("urn:li:company:"):
+        return urn.replace("urn:li:company:", "")
+
+    # Handle plain numeric ID
+    return urn

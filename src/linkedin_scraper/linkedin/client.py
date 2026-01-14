@@ -10,6 +10,7 @@ from linkedin_scraper.linkedin.exceptions import (
     LinkedInError,
     LinkedInRateLimitError,
 )
+from linkedin_scraper.linkedin.mapper import _extract_company_id_from_urn
 
 if TYPE_CHECKING:
     from linkedin_scraper.search.filters import SearchFilter
@@ -133,3 +134,55 @@ class LinkedInClient:
             return results
         except Exception as e:
             raise self._wrap_exception(e) from e
+
+    def search_companies(self, name: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Search for companies on LinkedIn by name.
+
+        Args:
+            name: Company name to search for.
+            limit: Maximum number of results to return (default: 5).
+
+        Returns:
+            List of raw result dictionaries from the LinkedIn API.
+
+        Raises:
+            LinkedInAuthError: If authentication has expired.
+            LinkedInRateLimitError: If LinkedIn rate limiting is triggered.
+            LinkedInError: For other unexpected errors.
+        """
+        try:
+            results: list[dict[str, Any]] = self._client.search_companies(
+                keywords=name,
+                limit=limit,
+            )
+            return results
+        except Exception as e:
+            raise self._wrap_exception(e) from e
+
+    def resolve_company_id(self, name: str) -> str | None:
+        """Resolve a company name to its LinkedIn company ID.
+
+        Searches for companies by name and returns the ID of the best match
+        (first result).
+
+        Args:
+            name: Company name to search for.
+
+        Returns:
+            The numeric company ID of the best match, or None if no match found.
+
+        Raises:
+            LinkedInAuthError: If authentication has expired.
+            LinkedInRateLimitError: If LinkedIn rate limiting is triggered.
+            LinkedInError: For other unexpected errors.
+        """
+        results = self.search_companies(name, limit=1)
+        if not results:
+            return None
+
+        first_result = results[0]
+        urn_id = first_result.get("urn_id")
+        if not urn_id:
+            return None
+
+        return _extract_company_id_from_urn(urn_id)

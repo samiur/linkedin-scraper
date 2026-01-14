@@ -253,3 +253,123 @@ class TestMapSearchResultToProfile:
 
         assert profile.first_name == "John"
         assert profile.last_name == "Doe"
+
+
+class TestMapCompanyResult:
+    """Tests for the map_company_result function."""
+
+    def test_maps_basic_company_fields(self) -> None:
+        """Should map basic fields from company search result."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "urn:li:company:1441",
+            "name": "Google",
+            "industry": "Internet",
+            "staff_count": 150000,
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] == "1441"
+        assert mapped["name"] == "Google"
+        assert mapped["industry"] == "Internet"
+        assert mapped["employee_count"] == 150000
+
+    def test_extracts_company_id_from_urn(self) -> None:
+        """Should extract numeric company ID from URN format."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "urn:li:company:28627158",
+            "name": "Anthropic",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] == "28627158"
+
+    def test_handles_plain_numeric_id(self) -> None:
+        """Should handle plain numeric company IDs."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "10667",
+            "name": "Meta",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] == "10667"
+
+    def test_handles_missing_industry(self) -> None:
+        """Should handle missing industry gracefully."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "urn:li:company:12345",
+            "name": "Startup Inc",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] == "12345"
+        assert mapped["name"] == "Startup Inc"
+        assert mapped["industry"] is None
+
+    def test_handles_missing_employee_count(self) -> None:
+        """Should handle missing employee count gracefully."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "urn:li:company:12345",
+            "name": "Small Co",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["employee_count"] is None
+
+    def test_handles_missing_urn_id(self) -> None:
+        """Should handle missing urn_id and return None for company_id."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "name": "Unknown Company",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] is None
+        assert mapped["name"] == "Unknown Company"
+
+    def test_handles_empty_urn_id(self) -> None:
+        """Should handle empty urn_id string."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "",
+            "name": "Company",
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] is None
+
+    def test_maps_complete_company_result(self) -> None:
+        """Should correctly map a complete company search result."""
+        from linkedin_scraper.linkedin.mapper import map_company_result
+
+        result = {
+            "urn_id": "urn:li:company:162479",
+            "name": "Apple Inc.",
+            "industry": "Consumer Electronics",
+            "staff_count": 164000,
+        }
+
+        mapped = map_company_result(result)
+
+        assert mapped["company_id"] == "162479"
+        assert mapped["name"] == "Apple Inc."
+        assert mapped["industry"] == "Consumer Electronics"
+        assert mapped["employee_count"] == 164000

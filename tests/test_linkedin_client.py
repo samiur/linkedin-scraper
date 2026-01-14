@@ -361,3 +361,189 @@ class TestLinkedInClientSearchPeople:
         assert call_kwargs["current_company"] == ["111", "222"]
         assert call_kwargs["regions"] == ["us:0"]
         assert call_kwargs["limit"] == 200
+
+
+class TestLinkedInClientSearchCompanies:
+    """Tests for LinkedInClient.search_companies method."""
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_with_name(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should call underlying API with company name."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = [
+            {"name": "Google", "urn_id": "urn:li:company:1441"},
+            {"name": "Google Cloud", "urn_id": "urn:li:company:2374003"},
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        results = client.search_companies("Google")
+
+        assert len(results) == 2
+        mock_instance.search_companies.assert_called_once()
+        call_kwargs = mock_instance.search_companies.call_args.kwargs
+        assert call_kwargs["keywords"] == "Google"
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_with_custom_limit(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should respect custom result limit."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        client.search_companies("Acme", limit=3)
+
+        call_kwargs = mock_instance.search_companies.call_args.kwargs
+        assert call_kwargs["limit"] == 3
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_default_limit(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should use default limit of 5."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        client.search_companies("Microsoft")
+
+        call_kwargs = mock_instance.search_companies.call_args.kwargs
+        assert call_kwargs["limit"] == 5
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_returns_raw_dicts(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should return raw result dictionaries."""
+        expected_results = [
+            {
+                "name": "Apple Inc.",
+                "urn_id": "urn:li:company:162479",
+                "industry": "Consumer Electronics",
+                "staff_count": 150000,
+            },
+        ]
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = expected_results
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        results = client.search_companies("Apple")
+
+        assert results == expected_results
+        assert results[0]["name"] == "Apple Inc."
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_handles_api_error(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should wrap API errors appropriately."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.side_effect = Exception("429 Rate limited")
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+
+        with pytest.raises(LinkedInRateLimitError):
+            client.search_companies("Test Company")
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_search_companies_handles_auth_error(self, mock_linkedin_class: MagicMock) -> None:
+        """search_companies should raise LinkedInAuthError on auth failures."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.side_effect = Exception("401 Unauthorized")
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+
+        with pytest.raises(LinkedInAuthError):
+            client.search_companies("Test Company")
+
+
+class TestLinkedInClientResolveCompanyId:
+    """Tests for LinkedInClient.resolve_company_id method."""
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_returns_best_match(self, mock_linkedin_class: MagicMock) -> None:
+        """resolve_company_id should return the ID of the first match."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = [
+            {"name": "Google", "urn_id": "urn:li:company:1441"},
+            {"name": "Google Cloud", "urn_id": "urn:li:company:2374003"},
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        company_id = client.resolve_company_id("Google")
+
+        assert company_id == "1441"
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_returns_none_when_no_match(
+        self, mock_linkedin_class: MagicMock
+    ) -> None:
+        """resolve_company_id should return None when no companies found."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = []
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        company_id = client.resolve_company_id("NonexistentCompany12345")
+
+        assert company_id is None
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_extracts_numeric_id_from_urn(
+        self, mock_linkedin_class: MagicMock
+    ) -> None:
+        """resolve_company_id should extract numeric ID from URN format."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = [
+            {"name": "Anthropic", "urn_id": "urn:li:company:28627158"},
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        company_id = client.resolve_company_id("Anthropic")
+
+        assert company_id == "28627158"
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_handles_plain_numeric_id(
+        self, mock_linkedin_class: MagicMock
+    ) -> None:
+        """resolve_company_id should handle plain numeric company IDs."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = [
+            {"name": "Meta", "urn_id": "10667"},
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        company_id = client.resolve_company_id("Meta")
+
+        assert company_id == "10667"
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_returns_none_when_missing_urn(
+        self, mock_linkedin_class: MagicMock
+    ) -> None:
+        """resolve_company_id should return None when result has no urn_id."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.return_value = [
+            {"name": "Some Company"},  # Missing urn_id
+        ]
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+        company_id = client.resolve_company_id("Some Company")
+
+        assert company_id is None
+
+    @patch("linkedin_scraper.linkedin.client.Linkedin")
+    def test_resolve_company_id_handles_api_error(self, mock_linkedin_class: MagicMock) -> None:
+        """resolve_company_id should wrap API errors appropriately."""
+        mock_instance = MagicMock()
+        mock_instance.search_companies.side_effect = Exception("429 Rate limited")
+        mock_linkedin_class.return_value = mock_instance
+
+        client = LinkedInClient(cookie="test_cookie")
+
+        with pytest.raises(LinkedInRateLimitError):
+            client.resolve_company_id("Test")
