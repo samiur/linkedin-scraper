@@ -11,7 +11,7 @@ Track completion of each prompt by checking the box when done.
 - [x] **Prompt 4**: CLI Skeleton with Typer
 
 ### Phase 2: Rate Limiting
-- [ ] **Prompt 5**: Rate Limiter Core Logic
+- [x] **Prompt 5**: Rate Limiter Core Logic
 - [ ] **Prompt 6**: Rate Limiter Delay Logic
 - [ ] **Prompt 7**: Rate Limiter Status Display
 
@@ -35,7 +35,7 @@ Track completion of each prompt by checking the box when done.
 
 ## Current Status
 
-**Current Prompt**: Prompt 4 completed
+**Current Prompt**: Prompt 5 completed
 **Last Updated**: 2026-01-14
 
 ---
