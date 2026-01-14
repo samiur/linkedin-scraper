@@ -1,11 +1,14 @@
 # ABOUTME: Rate limiter service that enforces API call limits.
 # ABOUTME: Tracks actions using database persistence and resets daily at midnight UTC.
 
-from datetime import UTC, datetime
+import random
+import time
+from datetime import UTC, datetime, timedelta
 
 from linkedin_scraper.config import Settings
 from linkedin_scraper.database import DatabaseService
 from linkedin_scraper.models import ActionType, RateLimitEntry
+from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
 
 
 class RateLimiter:
@@ -119,3 +122,62 @@ class RateLimiter:
         remaining = self._settings.min_delay_seconds - elapsed
 
         return max(0, int(remaining))
+
+    def calculate_delay(self) -> float:
+        """Calculate a random delay between min and max delay settings.
+
+        Returns a random value between min_delay_seconds and max_delay_seconds
+        to add jitter to requests and appear more human-like.
+
+        Returns:
+            Delay in seconds as a float.
+        """
+        return random.uniform(
+            self._settings.min_delay_seconds,
+            self._settings.max_delay_seconds,
+        )
+
+    def wait_if_needed(self) -> None:
+        """Sleep if the minimum delay hasn't passed since the last action.
+
+        If no actions have been recorded, returns immediately.
+        Otherwise, waits until min_delay_seconds have passed since the last action.
+        """
+        seconds_to_wait = self.seconds_until_next_allowed()
+        if seconds_to_wait > 0:
+            time.sleep(seconds_to_wait)
+
+    def _get_tomorrow_start(self) -> datetime:
+        """Get the start of tomorrow in UTC (midnight).
+
+        Returns:
+            Datetime representing midnight UTC of the next day.
+        """
+        today_start = self._get_today_start()
+        return today_start + timedelta(days=1)
+
+    def check_and_wait(self, action_type: ActionType) -> None:
+        """Check rate limit, wait if needed, and record the action.
+
+        This is the main method to call before performing any rate-limited action.
+        It will:
+        1. Raise RateLimitExceeded if the daily limit is reached
+        2. Wait if the minimum delay hasn't passed since the last action
+        3. Record the action after waiting
+
+        Args:
+            action_type: The type of action being performed.
+
+        Raises:
+            RateLimitExceeded: If the daily action limit has been reached.
+        """
+        if not self.can_perform_action(action_type):
+            reset_time = self._get_tomorrow_start()
+            raise RateLimitExceeded(
+                f"Daily limit of {self._settings.max_actions_per_day} actions reached. "
+                f"Try again after {reset_time.isoformat()}",
+                reset_time=reset_time,
+            )
+
+        self.wait_if_needed()
+        self.record_action(action_type)

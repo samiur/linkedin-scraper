@@ -312,3 +312,181 @@ class TestIntegration:
         assert rate_limiter.get_remaining_actions() == 0
         assert rate_limiter.can_perform_action(ActionType.SEARCH) is False
         assert rate_limiter.can_perform_action(ActionType.PROFILE_VIEW) is False
+
+
+class TestCalculateDelay:
+    """Tests for the calculate_delay method."""
+
+    def test_calculate_delay_returns_float(self, rate_limiter: RateLimiter) -> None:
+        """Should return a float representing delay in seconds."""
+        delay = rate_limiter.calculate_delay()
+        assert isinstance(delay, float)
+
+    def test_calculate_delay_within_bounds(self, rate_limiter: RateLimiter) -> None:
+        """Should return a delay between min and max delay settings."""
+        # settings has min_delay=10, max_delay=20
+        for _ in range(10):
+            delay = rate_limiter.calculate_delay()
+            assert 10 <= delay <= 20
+
+    def test_calculate_delay_with_mocked_random(
+        self, db_service: DatabaseService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should use random.uniform for jitter."""
+        import random
+
+        settings = Settings(min_delay_seconds=60, max_delay_seconds=120)
+        limiter = RateLimiter(db_service=db_service, settings=settings)
+
+        # Mock random.uniform to return a predictable value
+        monkeypatch.setattr(random, "uniform", lambda a, b: 90.5)
+
+        delay = limiter.calculate_delay()
+        assert delay == 90.5
+
+
+class TestWaitIfNeeded:
+    """Tests for the wait_if_needed method."""
+
+    def test_wait_if_needed_no_wait_when_no_actions(
+        self, rate_limiter: RateLimiter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should not wait when no previous actions."""
+        import time
+
+        sleep_called = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleep_called.append(s))
+
+        rate_limiter.wait_if_needed()
+
+        assert len(sleep_called) == 0
+
+    def test_wait_if_needed_sleeps_when_needed(
+        self, rate_limiter: RateLimiter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should sleep for the remaining time until min_delay has passed."""
+        import time
+
+        sleep_called = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleep_called.append(s))
+
+        # Record an action just now
+        rate_limiter.record_action(ActionType.SEARCH)
+
+        rate_limiter.wait_if_needed()
+
+        # Should have called sleep since action was just recorded
+        assert len(sleep_called) == 1
+        assert sleep_called[0] > 0
+
+    def test_wait_if_needed_no_wait_after_min_delay_passed(
+        self, db_service: DatabaseService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should not wait when min_delay has already passed."""
+        import time
+
+        settings = Settings(min_delay_seconds=10, max_delay_seconds=20)
+        limiter = RateLimiter(db_service=db_service, settings=settings)
+
+        # Record an action from 15 seconds ago
+        past_time = datetime.now(UTC) - timedelta(seconds=15)
+        db_service.save_rate_limit_entry(
+            RateLimitEntry(action_type=ActionType.SEARCH, timestamp=past_time)
+        )
+
+        sleep_called = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleep_called.append(s))
+
+        limiter.wait_if_needed()
+
+        assert len(sleep_called) == 0
+
+
+class TestRateLimitExceededException:
+    """Tests for the RateLimitExceeded exception."""
+
+    def test_rate_limit_exceeded_exception_exists(self) -> None:
+        """RateLimitExceeded exception should be importable."""
+        from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+
+        assert issubclass(RateLimitExceeded, Exception)
+
+    def test_rate_limit_exceeded_has_message(self) -> None:
+        """RateLimitExceeded should have a message attribute."""
+        from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+
+        exc = RateLimitExceeded("Daily limit reached")
+        assert str(exc) == "Daily limit reached"
+
+    def test_rate_limit_exceeded_can_have_reset_time(self) -> None:
+        """RateLimitExceeded should be able to store reset time."""
+        from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+
+        reset_time = datetime.now(UTC) + timedelta(hours=5)
+        exc = RateLimitExceeded("Daily limit reached", reset_time=reset_time)
+        assert exc.reset_time == reset_time
+
+
+class TestCheckAndWait:
+    """Tests for the check_and_wait method."""
+
+    def test_check_and_wait_raises_when_limit_exceeded(self, rate_limiter: RateLimiter) -> None:
+        """Should raise RateLimitExceeded when daily limit is reached."""
+        from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+
+        # Fill up the limit (5 actions)
+        for _ in range(5):
+            rate_limiter.record_action(ActionType.SEARCH)
+
+        with pytest.raises(RateLimitExceeded):
+            rate_limiter.check_and_wait(ActionType.SEARCH)
+
+    def test_check_and_wait_waits_and_records(
+        self, rate_limiter: RateLimiter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should wait if needed and then record the action."""
+        import time
+
+        sleep_called = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleep_called.append(s))
+
+        # No previous actions, should not need to wait much
+        initial_count = rate_limiter.get_actions_today()
+
+        rate_limiter.check_and_wait(ActionType.SEARCH)
+
+        # Should have recorded the action
+        assert rate_limiter.get_actions_today() == initial_count + 1
+
+    def test_check_and_wait_respects_delay_after_previous_action(
+        self, rate_limiter: RateLimiter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should wait appropriately after a previous action."""
+        import time
+
+        sleep_called = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleep_called.append(s))
+
+        # First action
+        rate_limiter.check_and_wait(ActionType.SEARCH)
+
+        # Second action should need to wait
+        rate_limiter.check_and_wait(ActionType.SEARCH)
+
+        # Should have waited on the second call
+        assert len(sleep_called) >= 1
+
+    def test_check_and_wait_reset_time_in_exception(self, rate_limiter: RateLimiter) -> None:
+        """RateLimitExceeded should include the reset time."""
+        from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+
+        # Fill up the limit
+        for _ in range(5):
+            rate_limiter.record_action(ActionType.SEARCH)
+
+        with pytest.raises(RateLimitExceeded) as exc_info:
+            rate_limiter.check_and_wait(ActionType.SEARCH)
+
+        # Reset time should be tomorrow at midnight UTC
+        assert exc_info.value.reset_time is not None
+        assert exc_info.value.reset_time > datetime.now(UTC)
