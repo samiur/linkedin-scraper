@@ -90,9 +90,7 @@ class TestCLIBasics:
 class TestLoginCommand:
     """Tests for the login command stub."""
 
-    def test_login_prints_not_implemented(
-        self, runner: CliRunner, temp_settings_env: str
-    ) -> None:
+    def test_login_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
         """Test that login command prints not implemented message."""
         result = runner.invoke(app, ["login"])
         assert "not implemented" in result.output.lower()
@@ -101,9 +99,7 @@ class TestLoginCommand:
 class TestSearchCommand:
     """Tests for the search command stub."""
 
-    def test_search_prints_not_implemented(
-        self, runner: CliRunner, temp_settings_env: str
-    ) -> None:
+    def test_search_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
         """Test that search command prints not implemented message."""
         result = runner.invoke(app, ["search"])
         assert "not implemented" in result.output.lower()
@@ -112,9 +108,7 @@ class TestSearchCommand:
 class TestExportCommand:
     """Tests for the export command stub."""
 
-    def test_export_prints_not_implemented(
-        self, runner: CliRunner, temp_settings_env: str
-    ) -> None:
+    def test_export_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
         """Test that export command prints not implemented message."""
         result = runner.invoke(app, ["export"])
         assert "not implemented" in result.output.lower()
@@ -123,9 +117,7 @@ class TestExportCommand:
 class TestStatusCommand:
     """Tests for the status command stub."""
 
-    def test_status_prints_not_implemented(
-        self, runner: CliRunner, temp_settings_env: str
-    ) -> None:
+    def test_status_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
         """Test that status command prints not implemented message."""
         result = runner.invoke(app, ["status"])
         assert "not implemented" in result.output.lower()
