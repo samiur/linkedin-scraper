@@ -9,8 +9,9 @@ from unittest import mock
 import pytest
 from typer.testing import CliRunner
 
-from linkedin_scraper.cli import app
+from linkedin_scraper.cli import app, get_cookie_instructions
 from linkedin_scraper.config import get_settings
+from linkedin_scraper.linkedin.exceptions import LinkedInAuthError
 
 
 @pytest.fixture
@@ -88,12 +89,144 @@ class TestCLIBasics:
 
 
 class TestLoginCommand:
-    """Tests for the login command stub."""
+    """Tests for the login command."""
 
-    def test_login_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
-        """Test that login command prints not implemented message."""
-        result = runner.invoke(app, ["login"])
-        assert "not implemented" in result.output.lower()
+    def test_login_help_shows_options(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that login command help shows --account and --validate options."""
+        result = runner.invoke(app, ["login", "--help"])
+        assert result.exit_code == 0
+        assert "--account" in result.output or "-a" in result.output
+        assert "--validate" in result.output or "--no-validate" in result.output
+
+    def test_login_prompts_for_cookie(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that login command prompts for cookie input."""
+        with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
+            mock_cm.return_value.validate_cookie_format.return_value = False
+            result = runner.invoke(app, ["login", "--no-validate"], input="short\n")
+            # Should prompt for cookie
+            assert "cookie" in result.output.lower() or "li_at" in result.output.lower()
+
+    def test_login_validates_cookie_format(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that login rejects invalid cookie format."""
+        with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
+            mock_cm.return_value.validate_cookie_format.return_value = False
+            result = runner.invoke(app, ["login", "--no-validate"], input="bad\n")
+            # Should show error about invalid format
+            assert result.exit_code != 0 or "invalid" in result.output.lower()
+
+    def test_login_successful_stores_cookie(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that login stores cookie on success."""
+        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            result = runner.invoke(app, ["login", "--no-validate"], input=f"{valid_cookie}\n")
+            # Should store the cookie
+            mock_cm.return_value.store_cookie.assert_called_once_with(valid_cookie, "default")
+            # Should show success
+            assert "success" in result.output.lower() or "stored" in result.output.lower()
+
+    def test_login_with_custom_account_name(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that login respects --account option."""
+        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            runner.invoke(
+                app,
+                ["login", "--account", "work", "--no-validate"],
+                input=f"{valid_cookie}\n",
+            )
+            # Should store with custom account name
+            mock_cm.return_value.store_cookie.assert_called_once_with(valid_cookie, "work")
+
+    def test_login_validates_cookie_online_by_default(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that login validates cookie with LinkedIn by default."""
+        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+        ):
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            mock_li.return_value.validate_session.return_value = True
+            runner.invoke(app, ["login"], input=f"{valid_cookie}\n")
+            # Should create LinkedInClient and validate session
+            mock_li.assert_called_once_with(valid_cookie)
+            mock_li.return_value.validate_session.assert_called_once()
+
+    def test_login_skips_validation_with_no_validate_flag(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that --no-validate skips online validation."""
+        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+        ):
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            runner.invoke(app, ["login", "--no-validate"], input=f"{valid_cookie}\n")
+            # Should NOT create LinkedInClient
+            mock_li.assert_not_called()
+            # Cookie should still be stored
+            mock_cm.return_value.store_cookie.assert_called_once()
+
+    def test_login_fails_on_invalid_session(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that login fails if session validation fails."""
+        invalid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+        ):
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            mock_li.return_value.validate_session.return_value = False
+            result = runner.invoke(app, ["login"], input=f"{invalid_cookie}\n")
+            # Should show error about invalid session
+            assert result.exit_code != 0 or "invalid" in result.output.lower()
+            # Should NOT store the cookie
+            mock_cm.return_value.store_cookie.assert_not_called()
+
+    def test_login_shows_instructions_on_auth_error(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that login shows cookie instructions on auth error."""
+        invalid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+        ):
+            mock_cm.return_value.validate_cookie_format.return_value = True
+            mock_li.side_effect = LinkedInAuthError("Auth failed")
+            result = runner.invoke(app, ["login"], input=f"{invalid_cookie}\n")
+            # Should show instructions about getting cookie
+            assert (
+                "instructions" in result.output.lower()
+                or "browser" in result.output.lower()
+                or "devtools" in result.output.lower()
+                or "how to" in result.output.lower()
+            )
+
+
+class TestGetCookieInstructions:
+    """Tests for the get_cookie_instructions helper function."""
+
+    def test_instructions_contain_browser_steps(self) -> None:
+        """Test that instructions explain how to get cookie from browser."""
+        instructions = get_cookie_instructions()
+        # Should mention browser/DevTools
+        assert "browser" in instructions.lower() or "devtools" in instructions.lower()
+        # Should mention cookies or li_at
+        assert "cookie" in instructions.lower() or "li_at" in instructions.lower()
+
+    def test_instructions_mention_linkedin(self) -> None:
+        """Test that instructions mention LinkedIn."""
+        instructions = get_cookie_instructions()
+        assert "linkedin" in instructions.lower()
 
 
 class TestSearchCommand:

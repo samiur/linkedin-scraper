@@ -1,12 +1,17 @@
 # ABOUTME: CLI skeleton for LinkedIn connection search tool using Typer.
-# ABOUTME: Provides command stubs for login, search, export, and status with ToS acceptance flow.
+# ABOUTME: Provides login, search, export, and status commands with ToS acceptance flow.
+
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 
+from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
+from linkedin_scraper.linkedin.client import LinkedInClient
+from linkedin_scraper.linkedin.exceptions import LinkedInAuthError
 
 app = typer.Typer(
     name="linkedin-scraper",
@@ -27,6 +32,25 @@ This tool uses an unofficial LinkedIn API and may violate LinkedIn's Terms of Se
 • The authors are not liable for any consequences of using this tool
 
 [bold red]Use at your own risk.[/bold red]"""
+
+
+def get_cookie_instructions() -> str:
+    """Return instructions for extracting the li_at cookie from a browser.
+
+    Returns:
+        A formatted string with step-by-step instructions for getting
+        the LinkedIn li_at cookie from browser DevTools.
+    """
+    return """[bold cyan]How to get your LinkedIn li_at cookie:[/bold cyan]
+
+1. Open your browser and log in to [link=https://www.linkedin.com]LinkedIn[/link]
+2. Open DevTools (F12 or right-click → Inspect)
+3. Go to the [bold]Application[/bold] tab (Chrome) or [bold]Storage[/bold] tab (Firefox)
+4. In the left sidebar, expand [bold]Cookies[/bold] → [bold]https://www.linkedin.com[/bold]
+5. Find the cookie named [bold yellow]li_at[/bold yellow]
+6. Copy the entire [bold]Value[/bold] (it's a long string starting with "AQ...")
+
+[dim]Note: The cookie expires periodically. If authentication fails, get a fresh cookie.[/dim]"""
 
 
 def _save_tos_acceptance(settings: Settings) -> None:
@@ -80,7 +104,23 @@ def main(ctx: typer.Context) -> None:
 
 
 @app.command()
-def login() -> None:
+def login(
+    account: Annotated[
+        str,
+        typer.Option(
+            "--account",
+            "-a",
+            help="Account name to store the cookie under.",
+        ),
+    ] = "default",
+    validate: Annotated[
+        bool,
+        typer.Option(
+            "--validate/--no-validate",
+            help="Validate the cookie with LinkedIn before storing.",
+        ),
+    ] = True,
+) -> None:
     """Store LinkedIn li_at cookie for authentication.
 
     Securely stores your LinkedIn session cookie in the OS keyring
@@ -89,7 +129,51 @@ def login() -> None:
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
 
-    console.print("[yellow]Login command not implemented yet.[/yellow]")
+    cookie_manager = CookieManager()
+
+    console.print()
+    console.print(
+        Panel(get_cookie_instructions(), title="Cookie Instructions", border_style="cyan")
+    )
+    console.print()
+
+    cookie = Prompt.ask("[bold]Paste your li_at cookie value[/bold]", password=True)
+
+    if not cookie_manager.validate_cookie_format(cookie):
+        console.print("[red]Error: Invalid cookie format.[/red]")
+        console.print("[dim]The cookie should be at least 10 characters long.[/dim]")
+        raise typer.Exit(code=1)
+
+    if validate:
+        console.print("[dim]Validating cookie with LinkedIn...[/dim]")
+        try:
+            client = LinkedInClient(cookie)
+            if not client.validate_session():
+                console.print("[red]Error: Cookie validation failed.[/red]")
+                console.print("[yellow]The cookie may be expired or invalid.[/yellow]")
+                console.print()
+                console.print(
+                    Panel(
+                        get_cookie_instructions(),
+                        title="How to Get a Fresh Cookie",
+                        border_style="yellow",
+                    )
+                )
+                raise typer.Exit(code=1)
+        except LinkedInAuthError as e:
+            console.print(f"[red]Error: Authentication failed - {e}[/red]")
+            console.print()
+            console.print(
+                Panel(
+                    get_cookie_instructions(),
+                    title="How to Get a Fresh Cookie",
+                    border_style="yellow",
+                )
+            )
+            raise typer.Exit(code=1) from None
+
+    cookie_manager.store_cookie(cookie, account)
+    console.print(f"[green]Success! Cookie stored for account '[bold]{account}[/bold]'.[/green]")
 
 
 @app.command()
