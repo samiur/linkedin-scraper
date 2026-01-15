@@ -404,12 +404,198 @@ class TestSearchCommand:
 
 
 class TestExportCommand:
-    """Tests for the export command stub."""
+    """Tests for the export command."""
 
-    def test_export_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
-        """Test that export command prints not implemented message."""
-        result = runner.invoke(app, ["export"])
-        assert "not implemented" in result.output.lower()
+    def test_export_help_shows_options(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export command help shows all options."""
+        result = runner.invoke(app, ["export", "--help"])
+        assert result.exit_code == 0
+        assert "--output" in result.output or "-o" in result.output
+        assert "--query" in result.output or "-q" in result.output
+        assert "--all" in result.output
+        assert "--limit" in result.output
+
+    def test_export_creates_csv_file(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export creates a CSV file with stored connections."""
+        sample_profiles = [
+            ConnectionProfile(
+                linkedin_urn_id="urn:li:member:123",
+                public_id="john-doe",
+                first_name="John",
+                last_name="Doe",
+                headline="Software Engineer",
+                profile_url="https://linkedin.com/in/john-doe",
+                connection_degree=1,
+                search_query="engineer",
+                found_at=datetime.now(UTC),
+            ),
+        ]
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = sample_profiles
+            mock_exporter.return_value.export.return_value = Path(temp_settings_env) / "test.csv"
+
+            result = runner.invoke(app, ["export", "-o", f"{temp_settings_env}/test.csv"])
+
+            assert result.exit_code == 0
+            # Should call export with profiles
+            mock_exporter.return_value.export.assert_called_once()
+
+    def test_export_with_query_filter(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export filters by query when --query is provided."""
+        sample_profiles = [
+            ConnectionProfile(
+                linkedin_urn_id="urn:li:member:123",
+                public_id="john-doe",
+                first_name="John",
+                last_name="Doe",
+                headline="Software Engineer",
+                profile_url="https://linkedin.com/in/john-doe",
+                connection_degree=1,
+                search_query="engineer",
+                found_at=datetime.now(UTC),
+            ),
+        ]
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections_by_query.return_value = sample_profiles
+            mock_exporter.return_value.export.return_value = Path(temp_settings_env) / "test.csv"
+
+            result = runner.invoke(
+                app,
+                ["export", "-q", "engineer", "-o", f"{temp_settings_env}/test.csv"],
+            )
+
+            assert result.exit_code == 0
+            # Should call get_connections_by_query with the query
+            mock_db.return_value.get_connections_by_query.assert_called()
+
+    def test_export_with_limit(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export respects --limit option."""
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = []
+            mock_exporter.return_value.export.return_value = Path(temp_settings_env) / "test.csv"
+
+            runner.invoke(
+                app,
+                ["export", "--limit", "50", "-o", f"{temp_settings_env}/test.csv"],
+            )
+
+            # Should pass limit to get_connections
+            mock_db.return_value.get_connections.assert_called()
+            call_kwargs = mock_db.return_value.get_connections.call_args[1]
+            assert call_kwargs.get("limit") == 50
+
+    def test_export_all_flag_exports_all_connections(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that --all flag exports all stored connections."""
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = []
+            mock_exporter.return_value.export.return_value = Path(temp_settings_env) / "test.csv"
+
+            runner.invoke(
+                app,
+                ["export", "--all", "-o", f"{temp_settings_env}/test.csv"],
+            )
+
+            # Should call get_connections without limit
+            mock_db.return_value.get_connections.assert_called()
+
+    def test_export_shows_success_message(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export shows success message with output path."""
+        output_path = Path(temp_settings_env) / "export.csv"
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = []
+            mock_exporter.return_value.export.return_value = output_path
+
+            result = runner.invoke(app, ["export", "-o", str(output_path)])
+
+            assert result.exit_code == 0
+            # Should show success message with path
+            assert "export" in result.output.lower() or str(output_path) in result.output
+
+    def test_export_shows_record_count(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export displays the number of exported records."""
+        sample_profiles = [
+            ConnectionProfile(
+                linkedin_urn_id=f"urn:li:member:{i}",
+                public_id=f"user-{i}",
+                first_name=f"User{i}",
+                last_name="Test",
+                headline="Test",
+                profile_url=f"https://linkedin.com/in/user-{i}",
+                connection_degree=1,
+                search_query="test",
+                found_at=datetime.now(UTC),
+            )
+            for i in range(5)
+        ]
+        output_path = Path(temp_settings_env) / "export.csv"
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = sample_profiles
+            mock_exporter.return_value.export.return_value = output_path
+
+            result = runner.invoke(app, ["export", "-o", str(output_path)])
+
+            assert result.exit_code == 0
+            # Should show count of 5
+            assert "5" in result.output
+
+    def test_export_uses_default_filename_when_not_specified(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that export uses a default filename when --output is not specified."""
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = []
+            mock_exporter.return_value.export.return_value = Path("linkedin_export_test.csv")
+
+            result = runner.invoke(app, ["export"])
+
+            assert result.exit_code == 0
+            # Should call export with some path
+            mock_exporter.return_value.export.assert_called_once()
+            call_args = mock_exporter.return_value.export.call_args
+            if len(call_args[0]) > 1:
+                export_path = call_args[0][1]
+            else:
+                export_path = call_args[1].get("output_path")
+            assert "linkedin_export" in str(export_path).lower()
+
+    def test_export_warns_when_no_records(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that export shows warning when no records to export."""
+        output_path = Path(temp_settings_env) / "export.csv"
+        with (
+            mock.patch("linkedin_scraper.cli.DatabaseService") as mock_db,
+            mock.patch("linkedin_scraper.cli.CSVExporter") as mock_exporter,
+        ):
+            mock_db.return_value.get_connections.return_value = []
+            mock_exporter.return_value.export.return_value = output_path
+
+            result = runner.invoke(app, ["export", "-o", str(output_path)])
+
+            assert result.exit_code == 0
+            # Should show message about no records or 0 records
+            assert "0" in result.output or "no" in result.output.lower()
 
 
 class TestStatusCommand:

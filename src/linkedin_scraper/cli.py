@@ -1,6 +1,7 @@
 # ABOUTME: CLI skeleton for LinkedIn connection search tool using Typer.
 # ABOUTME: Provides login, search, export, and status commands with ToS acceptance flow.
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -13,6 +14,7 @@ from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
 from linkedin_scraper.database import DatabaseService
 from linkedin_scraper.database.stats import get_database_stats
+from linkedin_scraper.export.csv_exporter import CSVExporter
 from linkedin_scraper.linkedin.client import LinkedInClient
 from linkedin_scraper.linkedin.exceptions import (
     LinkedInAuthError,
@@ -363,8 +365,51 @@ def search(
     )
 
 
+def _generate_default_export_path() -> Path:
+    """Generate a default export file path with timestamp.
+
+    Returns:
+        Path to the default export file.
+    """
+    from datetime import UTC, datetime
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return Path(f"linkedin_export_{timestamp}.csv")
+
+
 @app.command()
-def export() -> None:
+def export(
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output file path. Defaults to linkedin_export_{timestamp}.csv",
+        ),
+    ] = None,
+    query: Annotated[
+        str | None,
+        typer.Option(
+            "--query",
+            "-q",
+            help="Filter by search query string.",
+        ),
+    ] = None,
+    export_all: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Export all stored results (default if no filters).",
+        ),
+    ] = False,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            help="Maximum number of records to export.",
+        ),
+    ] = None,
+) -> None:
     """Export search results to CSV.
 
     Export stored connection profiles to a CSV file for
@@ -373,7 +418,39 @@ def export() -> None:
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
 
-    console.print("[yellow]Export command not implemented yet.[/yellow]")
+    settings = get_settings()
+    db_service = DatabaseService(db_path=settings.db_path)
+    db_service.init_db()
+
+    # Determine output path
+    output_path = output if output is not None else _generate_default_export_path()
+
+    # Fetch profiles based on filters
+    profiles: list[ConnectionProfile]
+    query_info: str | None = None
+
+    if query:
+        profiles = db_service.get_connections_by_query(query, limit=limit)
+        query_info = query
+    else:
+        # Default: export all (or limited)
+        if limit is not None:
+            profiles = db_service.get_connections(limit=limit)
+        else:
+            # Get all connections - use a large limit
+            profiles = db_service.get_connections(limit=100000)
+
+    # Export to CSV
+    exporter = CSVExporter()
+    result_path = exporter.export(profiles, output_path, query_info=query_info)
+
+    # Display results
+    record_count = len(profiles)
+    if record_count == 0:
+        console.print("[yellow]No records to export.[/yellow]")
+    else:
+        console.print(f"[green]Exported {record_count} record(s) to:[/green]")
+    console.print(f"  [cyan]{result_path}[/cyan]")
 
 
 def _render_database_stats_panel(stats: dict[str, object]) -> Panel:

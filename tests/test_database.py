@@ -172,6 +172,91 @@ class TestConnectionProfileOperations:
         found = db_service.get_connection_by_urn("urn:li:member:nonexistent")
         assert found is None
 
+    def test_get_connections_by_query_filters_by_search_query(
+        self, db_service: DatabaseService
+    ) -> None:
+        """Test that get_connections_by_query filters by search_query field."""
+        profile1 = ConnectionProfile(
+            linkedin_urn_id="urn:li:member:1",
+            public_id="engineer-1",
+            first_name="Engineer",
+            last_name="One",
+            profile_url="https://linkedin.com/in/engineer-1",
+            connection_degree=1,
+            search_query="software engineer",
+        )
+        profile2 = ConnectionProfile(
+            linkedin_urn_id="urn:li:member:2",
+            public_id="manager-1",
+            first_name="Manager",
+            last_name="One",
+            profile_url="https://linkedin.com/in/manager-1",
+            connection_degree=1,
+            search_query="product manager",
+        )
+        db_service.save_connection(profile1)
+        db_service.save_connection(profile2)
+
+        results = db_service.get_connections_by_query("software engineer")
+
+        assert len(results) == 1
+        assert results[0].public_id == "engineer-1"
+
+    def test_get_connections_by_query_returns_empty_for_no_match(
+        self, db_service: DatabaseService
+    ) -> None:
+        """Test that get_connections_by_query returns empty list when no match."""
+        profile = ConnectionProfile(
+            linkedin_urn_id="urn:li:member:1",
+            public_id="user-1",
+            first_name="User",
+            last_name="One",
+            profile_url="https://linkedin.com/in/user-1",
+            connection_degree=1,
+            search_query="engineer",
+        )
+        db_service.save_connection(profile)
+
+        results = db_service.get_connections_by_query("designer")
+
+        assert len(results) == 0
+
+    def test_get_connections_by_query_respects_limit(self, db_service: DatabaseService) -> None:
+        """Test that get_connections_by_query respects limit parameter."""
+        for i in range(5):
+            profile = ConnectionProfile(
+                linkedin_urn_id=f"urn:li:member:{i}",
+                public_id=f"user-{i}",
+                first_name=f"User{i}",
+                last_name="Test",
+                profile_url=f"https://linkedin.com/in/user-{i}",
+                connection_degree=1,
+                search_query="engineer",
+            )
+            db_service.save_connection(profile)
+
+        results = db_service.get_connections_by_query("engineer", limit=3)
+
+        assert len(results) == 3
+
+    def test_get_connections_by_query_handles_none_limit(self, db_service: DatabaseService) -> None:
+        """Test that get_connections_by_query returns all when limit is None."""
+        for i in range(5):
+            profile = ConnectionProfile(
+                linkedin_urn_id=f"urn:li:member:{i}",
+                public_id=f"user-{i}",
+                first_name=f"User{i}",
+                last_name="Test",
+                profile_url=f"https://linkedin.com/in/user-{i}",
+                connection_degree=1,
+                search_query="engineer",
+            )
+            db_service.save_connection(profile)
+
+        results = db_service.get_connections_by_query("engineer", limit=None)
+
+        assert len(results) == 5
+
 
 class TestRateLimitEntryOperations:
     """Tests for RateLimitEntry operations."""

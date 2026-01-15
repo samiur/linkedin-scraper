@@ -84,6 +84,25 @@ class DatabaseService:
             result = session.exec(statement)
             return result.first()
 
+    def get_connections_by_query(
+        self, query: str, limit: int | None = None
+    ) -> list[ConnectionProfile]:
+        """Retrieve connection profiles filtered by search query.
+
+        Args:
+            query: The search query string to filter by.
+            limit: Maximum number of profiles to return. None for no limit.
+
+        Returns:
+            List of ConnectionProfile objects matching the query.
+        """
+        with self.get_session() as session:
+            statement = select(ConnectionProfile).where(ConnectionProfile.search_query == query)
+            if limit is not None:
+                statement = statement.limit(limit)
+            results = session.exec(statement)
+            return list(results.all())
+
     def save_rate_limit_entry(self, entry: RateLimitEntry) -> RateLimitEntry:
         """Save a rate limit entry to the database.
 
