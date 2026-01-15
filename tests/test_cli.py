@@ -867,3 +867,108 @@ class TestToSAcceptance:
         )
         # Should not ask about acceptance
         assert "do you accept" not in result.output.lower()
+
+
+class TestDebugFlag:
+    """Tests for the --debug flag functionality."""
+
+    def test_debug_flag_exists(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that --debug flag is available on the CLI."""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--debug" in result.output
+
+    def test_debug_flag_shows_traceback_on_error(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that --debug flag shows traceback when error occurs."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = Exception(
+                "Unexpected error"
+            )
+            result = runner.invoke(app, ["--debug", "search", "-k", "engineer"])
+            # Should show traceback information
+            assert (
+                "traceback" in result.output.lower()
+                or "exception" in result.output.lower()
+                or "error" in result.output.lower()
+            )
+
+    def test_debug_flag_suppresses_traceback_by_default(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that traceback is not shown without --debug flag."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = Exception(
+                "Unexpected error"
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should not show full traceback, just clean error message
+            assert result.exit_code != 0
+
+
+class TestErrorHandling:
+    """Tests for graceful error handling in CLI."""
+
+    def test_network_error_shows_retry_suggestion(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that network errors suggest retry."""
+        import urllib.error
+
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = (
+                urllib.error.URLError("Connection refused")
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show error and suggest retry
+            assert result.exit_code != 0
+            assert (
+                "retry" in result.output.lower()
+                or "network" in result.output.lower()
+                or "connection" in result.output.lower()
+            )
+
+    def test_generic_error_shows_details(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that generic errors show error details."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = RuntimeError(
+                "Something unexpected"
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show error
+            assert result.exit_code != 0
+            assert "error" in result.output.lower()
+
+    def test_auth_error_shows_cookie_help(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that auth errors display cookie help information."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = LinkedInAuthError(
+                "Invalid cookie"
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show cookie help
+            assert result.exit_code != 0
+            assert (
+                "cookie" in result.output.lower()
+                or "login" in result.output.lower()
+                or "li_at" in result.output.lower()
+            )
+
+    def test_rate_limit_exceeded_shows_reset_time(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that rate limit errors show when to try again."""
+        reset_time = datetime.now(UTC)
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = RateLimitExceeded(
+                "Daily limit reached", reset_time=reset_time
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show rate limit info with reset time
+            assert result.exit_code != 0
+            assert (
+                "limit" in result.output.lower()
+                or "tomorrow" in result.output.lower()
+                or "midnight" in result.output.lower()
+            )

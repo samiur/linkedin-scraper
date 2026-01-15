@@ -1,6 +1,7 @@
 # ABOUTME: CLI skeleton for LinkedIn connection search tool using Typer.
 # ABOUTME: Provides login, search, export, and status commands with ToS acceptance flow.
 
+import urllib.error
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +16,12 @@ from linkedin_scraper.config import Settings, get_settings
 from linkedin_scraper.database import DatabaseService
 from linkedin_scraper.database.stats import get_database_stats
 from linkedin_scraper.display import ConnectionTable
+from linkedin_scraper.display.errors import (
+    display_cookie_help,
+    display_error,
+    display_network_error,
+    display_rate_limit_exceeded,
+)
 from linkedin_scraper.display.status import display_rate_limit_warning
 from linkedin_scraper.export.csv_exporter import CSVExporter
 from linkedin_scraper.linkedin.client import LinkedInClient
@@ -28,6 +35,9 @@ from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
 from linkedin_scraper.rate_limit.service import RateLimiter
 from linkedin_scraper.search.filters import NetworkDepth
 from linkedin_scraper.search.orchestrator import SearchOrchestrator
+
+# Global debug state (set via --debug flag)
+_debug_mode: bool = False
 
 app = typer.Typer(
     name="linkedin-scraper",
@@ -108,13 +118,63 @@ def _check_tos_acceptance() -> bool:
         return False
 
 
+def _handle_error(error: Exception) -> None:
+    """Handle and display an error based on its type.
+
+    Args:
+        error: The exception to handle.
+
+    Raises:
+        typer.Exit: Always raises Exit with code 1 after displaying the error.
+    """
+    global _debug_mode
+
+    if isinstance(error, LinkedInAuthError):
+        console.print(display_error(error, verbose=_debug_mode))
+        console.print()
+        console.print("[yellow]Please run 'linkedin-scraper login' first.[/yellow]")
+        console.print()
+        console.print(display_cookie_help())
+    elif isinstance(error, RateLimitExceeded):
+        reset_time = getattr(error, "reset_time", None)
+        if reset_time:
+            console.print(display_rate_limit_exceeded(reset_time))
+        else:
+            console.print(display_error(error, verbose=_debug_mode))
+    elif isinstance(error, LinkedInRateLimitError):
+        console.print(display_error(error, verbose=_debug_mode))
+        console.print(
+            "[dim]LinkedIn's rate limit was triggered. Wait a few minutes and try again.[/dim]"
+        )
+    elif isinstance(error, (urllib.error.URLError, ConnectionError, OSError)):
+        console.print(display_network_error(error))
+    else:
+        console.print(display_error(error, verbose=_debug_mode))
+        if _debug_mode:
+            console.print("[dim]Run with --debug for more details.[/dim]")
+
+    raise typer.Exit(code=1)
+
+
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> None:
+def main(
+    ctx: typer.Context,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help="Enable debug mode with verbose error output and tracebacks.",
+        ),
+    ] = False,
+) -> None:
     """LinkedIn connection search CLI tool.
 
     Search for LinkedIn connections by keywords, company, location, and more.
     Results can be exported to CSV for further analysis.
     """
+    global _debug_mode
+    _debug_mode = debug
+
     if ctx.invoked_subcommand is None:
         console.print("[dim]Use --help to see available commands.[/dim]")
 
@@ -293,28 +353,17 @@ def search(
             limit=limit,
             account=account,
         )
-    except LinkedInAuthError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        console.print()
-        console.print("[yellow]Please run 'linkedin-scraper login' first.[/yellow]")
-        console.print()
-        console.print(
-            Panel(
-                get_cookie_instructions(),
-                title="How to Get a Cookie",
-                border_style="yellow",
-            )
-        )
-        raise typer.Exit(code=1) from None
-    except RateLimitExceeded as e:
-        console.print("[red]Error: Rate limit exceeded.[/red]")
-        console.print(f"[yellow]{e}[/yellow]")
-        raise typer.Exit(code=1) from None
-    except LinkedInRateLimitError as e:
-        console.print("[red]Error: LinkedIn rate limit triggered.[/red]")
-        console.print(f"[yellow]{e}[/yellow]")
-        console.print("[dim]Wait a few minutes and try again.[/dim]")
-        raise typer.Exit(code=1) from None
+    except (
+        LinkedInAuthError,
+        RateLimitExceeded,
+        LinkedInRateLimitError,
+        urllib.error.URLError,
+        ConnectionError,
+        OSError,
+    ) as e:
+        _handle_error(e)
+    except Exception as e:
+        _handle_error(e)
 
     # Display results
     if profiles:
