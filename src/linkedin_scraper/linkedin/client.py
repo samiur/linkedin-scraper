@@ -19,22 +19,39 @@ if TYPE_CHECKING:
 class LinkedInClient:
     """Wrapper around linkedin-api library for authenticated LinkedIn operations."""
 
-    def __init__(self, cookie: str) -> None:
-        """Create an authenticated LinkedIn client using a li_at cookie.
+    def __init__(self, li_at: str, jsessionid: str | None = None) -> None:
+        """Create an authenticated LinkedIn client using LinkedIn cookies.
 
         Args:
-            cookie: The li_at cookie value for authentication.
+            li_at: The li_at cookie value for authentication.
+            jsessionid: The JSESSIONID cookie value (required for API calls).
+                If not provided, session validation will fail.
 
         Raises:
-            LinkedInAuthError: If the cookie is invalid or authentication fails.
+            LinkedInAuthError: If the cookies are invalid or authentication fails.
             LinkedInRateLimitError: If LinkedIn rate limiting is triggered.
             LinkedInError: For other unexpected errors.
         """
         try:
+            # Create client without authentication - we'll set cookies manually
             self._client: Linkedin = Linkedin(
-                cookies={"li_at": cookie},
+                "",
+                "",
+                authenticate=False,
                 refresh_cookies=False,
             )
+
+            # Manually set cookies on the session (the library's cookie handling is buggy)
+            self._client.client.session.cookies.set(
+                "li_at", li_at, domain=".linkedin.com"
+            )
+            if jsessionid:
+                # JSESSIONID needs quotes in the cookie value
+                self._client.client.session.cookies.set(
+                    "JSESSIONID", f'"{jsessionid}"', domain=".linkedin.com"
+                )
+                # Set CSRF token header (required for API calls)
+                self._client.client.session.headers["csrf-token"] = jsessionid
         except Exception as e:
             raise self._wrap_exception(e) from e
 

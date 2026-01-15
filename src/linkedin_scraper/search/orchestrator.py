@@ -58,11 +58,11 @@ class SearchOrchestrator:
             RateLimitExceeded: If the daily rate limit has been reached.
             LinkedInRateLimitError: If LinkedIn's rate limit is triggered.
         """
-        # Load cookie for the account
-        cookie = self._cookie_manager.get_cookie(account)
-        if cookie is None:
+        # Load cookies for the account
+        cookies = self._cookie_manager.get_cookies(account)
+        if cookies is None:
             raise LinkedInAuthError(
-                f"No cookie found for account '{account}'. "
+                f"No cookies found for account '{account}'. "
                 "Please run 'linkedin-scraper login' first."
             )
 
@@ -70,7 +70,7 @@ class SearchOrchestrator:
         self._rate_limiter.check_and_wait(ActionType.SEARCH)
 
         # Create client and execute search
-        client = LinkedInClient(cookie)
+        client = LinkedInClient(cookies["li_at"], cookies.get("JSESSIONID"))
         raw_results = client.search_people(filter)
 
         # Map results to ConnectionProfile objects
@@ -111,20 +111,20 @@ class SearchOrchestrator:
             List of ConnectionProfile objects from the search results.
 
         Raises:
-            LinkedInAuthError: If no cookie is found for the account.
+            LinkedInAuthError: If no cookies found for the account.
             RateLimitExceeded: If the daily rate limit has been reached.
             LinkedInRateLimitError: If LinkedIn's rate limit is triggered.
         """
-        # Load cookie for the account
-        cookie = self._cookie_manager.get_cookie(account)
-        if cookie is None:
+        # Load cookies for the account
+        cookies = self._cookie_manager.get_cookies(account)
+        if cookies is None:
             raise LinkedInAuthError(
-                f"No cookie found for account '{account}'. "
+                f"No cookies found for account '{account}'. "
                 "Please run 'linkedin-scraper login' first."
             )
 
         # Create client for company resolution
-        client = LinkedInClient(cookie)
+        client = LinkedInClient(cookies["li_at"], cookies.get("JSESSIONID"))
 
         # Resolve company name to ID if provided
         company_ids: list[str] | None = None

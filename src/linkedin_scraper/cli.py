@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from linkedin_scraper import __version__
 from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
 from linkedin_scraper.database import DatabaseService
@@ -39,10 +40,26 @@ from linkedin_scraper.search.orchestrator import SearchOrchestrator
 # Global debug state (set via --debug flag)
 _debug_mode: bool = False
 
+
+def _version_callback(value: bool) -> None:
+    """Print version and exit if --version flag is passed.
+
+    Args:
+        value: Whether the version flag was provided.
+
+    Raises:
+        typer.Exit: Exits after printing version.
+    """
+    if value:
+        typer.echo(f"linkedin-scraper {__version__}")
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="linkedin-scraper",
     help="CLI tool to search LinkedIn connections using cookies.",
     add_completion=False,
+    rich_markup_mode="rich",
 )
 
 console = Console()
@@ -61,22 +78,23 @@ This tool uses an unofficial LinkedIn API and may violate LinkedIn's Terms of Se
 
 
 def get_cookie_instructions() -> str:
-    """Return instructions for extracting the li_at cookie from a browser.
+    """Return instructions for extracting LinkedIn cookies from a browser.
 
     Returns:
         A formatted string with step-by-step instructions for getting
-        the LinkedIn li_at cookie from browser DevTools.
+        the LinkedIn cookies from browser DevTools.
     """
-    return """[bold cyan]How to get your LinkedIn li_at cookie:[/bold cyan]
+    return """[bold cyan]How to get your LinkedIn cookies:[/bold cyan]
 
 1. Open your browser and log in to [link=https://www.linkedin.com]LinkedIn[/link]
 2. Open DevTools (F12 or right-click → Inspect)
 3. Go to the [bold]Application[/bold] tab (Chrome) or [bold]Storage[/bold] tab (Firefox)
 4. In the left sidebar, expand [bold]Cookies[/bold] → [bold]https://www.linkedin.com[/bold]
-5. Find the cookie named [bold yellow]li_at[/bold yellow]
-6. Copy the entire [bold]Value[/bold] (it's a long string starting with "AQ...")
+5. Find and copy these two cookies:
+   • [bold yellow]li_at[/bold yellow] - a long string starting with "AQ..."
+   • [bold yellow]JSESSIONID[/bold yellow] - looks like "ajax:1234567890..."
 
-[dim]Note: The cookie expires periodically. If authentication fails, get a fresh cookie.[/dim]"""
+[dim]Note: Both cookies are required. They expire periodically.[/dim]"""
 
 
 def _save_tos_acceptance(settings: Settings) -> None:
@@ -166,11 +184,38 @@ def main(
             help="Enable debug mode with verbose error output and tracebacks.",
         ),
     ] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show version and exit.",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+    ] = False,
 ) -> None:
     """LinkedIn connection search CLI tool.
 
     Search for LinkedIn connections by keywords, company, location, and more.
     Results can be exported to CSV for further analysis.
+
+    [bold]Examples:[/bold]
+
+        [cyan]linkedin-scraper login[/cyan]
+            Store your LinkedIn cookie for authentication.
+
+        [cyan]linkedin-scraper search -k "software engineer"[/cyan]
+            Search for software engineers in your network.
+
+        [cyan]linkedin-scraper search -k "manager" -c "Google" -l "San Francisco"[/cyan]
+            Search for managers at Google in San Francisco.
+
+        [cyan]linkedin-scraper export -o results.csv[/cyan]
+            Export stored results to a CSV file.
+
+        [cyan]linkedin-scraper status[/cyan]
+            Show rate limits and account status.
     """
     global _debug_mode
     _debug_mode = debug
@@ -186,21 +231,32 @@ def login(
         typer.Option(
             "--account",
             "-a",
-            help="Account name to store the cookie under.",
+            help="Account name to store the cookies under.",
         ),
     ] = "default",
     validate: Annotated[
         bool,
         typer.Option(
             "--validate/--no-validate",
-            help="Validate the cookie with LinkedIn before storing.",
+            help="Validate the cookies with LinkedIn before storing.",
         ),
     ] = True,
 ) -> None:
-    """Store LinkedIn li_at cookie for authentication.
+    """Store LinkedIn cookies for authentication.
 
-    Securely stores your LinkedIn session cookie in the OS keyring
-    for use with search operations.
+    Securely stores your LinkedIn session cookies (li_at and JSESSIONID)
+    in the OS keyring for use with search operations.
+
+    [bold]Examples:[/bold]
+
+        [cyan]linkedin-scraper login[/cyan]
+            Login with the default account.
+
+        [cyan]linkedin-scraper login --account work[/cyan]
+            Store cookies under the 'work' account name.
+
+        [cyan]linkedin-scraper login --no-validate[/cyan]
+            Skip online validation of the cookies.
     """
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
@@ -213,25 +269,32 @@ def login(
     )
     console.print()
 
-    cookie = Prompt.ask("[bold]Paste your li_at cookie value[/bold]", password=True)
+    li_at = Prompt.ask("[bold]Paste your li_at cookie value[/bold]", password=True)
 
-    if not cookie_manager.validate_cookie_format(cookie):
-        console.print("[red]Error: Invalid cookie format.[/red]")
+    if not cookie_manager.validate_cookie_format(li_at):
+        console.print("[red]Error: Invalid li_at cookie format.[/red]")
+        console.print("[dim]The cookie should be at least 10 characters long.[/dim]")
+        raise typer.Exit(code=1)
+
+    jsessionid = Prompt.ask("[bold]Paste your JSESSIONID cookie value[/bold]", password=True)
+
+    if not cookie_manager.validate_cookie_format(jsessionid):
+        console.print("[red]Error: Invalid JSESSIONID cookie format.[/red]")
         console.print("[dim]The cookie should be at least 10 characters long.[/dim]")
         raise typer.Exit(code=1)
 
     if validate:
-        console.print("[dim]Validating cookie with LinkedIn...[/dim]")
+        console.print("[dim]Validating cookies with LinkedIn...[/dim]")
         try:
-            client = LinkedInClient(cookie)
+            client = LinkedInClient(li_at, jsessionid)
             if not client.validate_session():
                 console.print("[red]Error: Cookie validation failed.[/red]")
-                console.print("[yellow]The cookie may be expired or invalid.[/yellow]")
+                console.print("[yellow]The cookies may be expired or invalid.[/yellow]")
                 console.print()
                 console.print(
                     Panel(
                         get_cookie_instructions(),
-                        title="How to Get a Fresh Cookie",
+                        title="How to Get Fresh Cookies",
                         border_style="yellow",
                     )
                 )
@@ -242,14 +305,14 @@ def login(
             console.print(
                 Panel(
                     get_cookie_instructions(),
-                    title="How to Get a Fresh Cookie",
+                    title="How to Get Fresh Cookies",
                     border_style="yellow",
                 )
             )
             raise typer.Exit(code=1) from None
 
-    cookie_manager.store_cookie(cookie, account)
-    console.print(f"[green]Success! Cookie stored for account '[bold]{account}[/bold]'.[/green]")
+    cookie_manager.store_cookies(li_at, jsessionid, account)
+    console.print(f"[green]Success! Cookies stored for account '[bold]{account}[/bold]'.[/green]")
 
 
 def _parse_degrees(degree_str: str) -> list[NetworkDepth]:
@@ -328,6 +391,20 @@ def search(
 
     Search for connections by keywords, company, location, and connection degree.
     Results are saved to the database and displayed in a formatted table.
+
+    [bold]Examples:[/bold]
+
+        [cyan]linkedin-scraper search -k "software engineer"[/cyan]
+            Basic keyword search.
+
+        [cyan]linkedin-scraper search -k "manager" -c "Google"[/cyan]
+            Search for managers at Google.
+
+        [cyan]linkedin-scraper search -k "developer" -l "New York" -d "1,2,3"[/cyan]
+            Search developers in New York across all connection degrees.
+
+        [cyan]linkedin-scraper search -k "data scientist" --limit 50 -a work[/cyan]
+            Search with custom limit using 'work' account.
     """
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
@@ -435,6 +512,20 @@ def export(
 
     Export stored connection profiles to a CSV file for
     further analysis or import into other tools.
+
+    [bold]Examples:[/bold]
+
+        [cyan]linkedin-scraper export[/cyan]
+            Export all results to a timestamped file.
+
+        [cyan]linkedin-scraper export -o results.csv[/cyan]
+            Export all results to a specific file.
+
+        [cyan]linkedin-scraper export -q "engineer" -o engineers.csv[/cyan]
+            Export only results from searches with 'engineer' keyword.
+
+        [cyan]linkedin-scraper export --limit 100 -o top100.csv[/cyan]
+            Export only the first 100 records.
     """
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
@@ -571,6 +662,17 @@ def status(
 
     Display current rate limit usage, stored accounts,
     and database statistics.
+
+    [bold]Examples:[/bold]
+
+        [cyan]linkedin-scraper status[/cyan]
+            Show rate limits, database stats, and accounts.
+
+        [cyan]linkedin-scraper status -a default[/cyan]
+            Validate the 'default' account's session.
+
+        [cyan]linkedin-scraper status --account work[/cyan]
+            Validate the 'work' account's session.
     """
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
@@ -597,13 +699,13 @@ def status(
 
     if account:
         # Validate specific account
-        cookie = cookie_manager.get_cookie(account)
-        if cookie is None:
-            console.print(f"[yellow]Account '{account}' not found. No cookie stored.[/yellow]")
+        cookies = cookie_manager.get_cookies(account)
+        if cookies is None:
+            console.print(f"[yellow]Account '{account}' not found. No cookies stored.[/yellow]")
         else:
             console.print(f"[dim]Validating session for '{account}'...[/dim]")
             try:
-                client = LinkedInClient(cookie)
+                client = LinkedInClient(cookies["li_at"], cookies.get("JSESSIONID"))
                 is_valid = client.validate_session()
                 validation_result = (account, is_valid)
                 if is_valid:
