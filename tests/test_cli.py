@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -11,7 +12,9 @@ from typer.testing import CliRunner
 
 from linkedin_scraper.cli import app, get_cookie_instructions
 from linkedin_scraper.config import get_settings
-from linkedin_scraper.linkedin.exceptions import LinkedInAuthError
+from linkedin_scraper.linkedin.exceptions import LinkedInAuthError, LinkedInRateLimitError
+from linkedin_scraper.models import ConnectionProfile
+from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
 
 
 @pytest.fixture
@@ -230,12 +233,174 @@ class TestGetCookieInstructions:
 
 
 class TestSearchCommand:
-    """Tests for the search command stub."""
+    """Tests for the search command."""
 
-    def test_search_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
-        """Test that search command prints not implemented message."""
+    def test_search_help_shows_options(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search command help shows all required options."""
+        result = runner.invoke(app, ["search", "--help"])
+        assert result.exit_code == 0
+        assert "--keywords" in result.output or "-k" in result.output
+        assert "--company" in result.output or "-c" in result.output
+        assert "--location" in result.output or "-l" in result.output
+        assert "--degree" in result.output or "-d" in result.output
+        assert "--limit" in result.output
+        assert "--account" in result.output or "-a" in result.output
+
+    def test_search_requires_keywords(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search command requires --keywords option."""
         result = runner.invoke(app, ["search"])
-        assert "not implemented" in result.output.lower()
+        # Should show error about missing keywords
+        assert result.exit_code != 0
+
+    def test_search_successful_displays_results(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that search displays results in a table."""
+        sample_profiles = [
+            ConnectionProfile(
+                linkedin_urn_id="urn:li:member:123",
+                public_id="john-doe",
+                first_name="John",
+                last_name="Doe",
+                headline="Software Engineer",
+                location="San Francisco, CA",
+                profile_url="https://linkedin.com/in/john-doe",
+                connection_degree=1,
+                search_query="engineer",
+                found_at=datetime.now(UTC),
+            ),
+        ]
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = sample_profiles
+            mock_orch.return_value.get_remaining_actions.return_value = 24
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should display results
+            assert "john" in result.output.lower() or "doe" in result.output.lower()
+
+    def test_search_uses_default_account(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search uses 'default' account when not specified."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            assert call_kwargs["account"] == "default"
+
+    def test_search_with_custom_account(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search respects --account option."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer", "-a", "work"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            assert call_kwargs["account"] == "work"
+
+    def test_search_with_company_filter(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search passes company name to orchestrator."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer", "-c", "TechCorp"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            assert call_kwargs["company_name"] == "TechCorp"
+
+    def test_search_with_location_filter(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search passes location to orchestrator."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer", "-l", "San Francisco"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            assert call_kwargs["location"] == "San Francisco"
+
+    def test_search_with_degree_filter(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search parses and passes degree filter."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer", "-d", "1,2,3"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            # Should have 3 network depths
+            assert len(call_kwargs["network_depths"]) == 3
+
+    def test_search_with_limit(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search respects --limit option."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 25
+            runner.invoke(app, ["search", "-k", "engineer", "--limit", "50"])
+            call_kwargs = mock_orch.return_value.execute_search_with_company_name.call_args[1]
+            assert call_kwargs["limit"] == 50
+
+    def test_search_shows_rate_limit_status(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that search shows rate limit status after search."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = []
+            mock_orch.return_value.get_remaining_actions.return_value = 20
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show remaining actions or rate limit info
+            assert "20" in result.output or "remaining" in result.output.lower()
+
+    def test_search_handles_auth_error(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search shows helpful error on auth failure."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = LinkedInAuthError(
+                "No cookie found"
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show auth error and instructions
+            assert result.exit_code != 0
+            assert "cookie" in result.output.lower() or "login" in result.output.lower()
+
+    def test_search_handles_rate_limit_exceeded(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that search shows helpful error when rate limit exceeded."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = RateLimitExceeded(
+                "Daily limit reached", reset_time=datetime.now(UTC)
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show rate limit error
+            assert result.exit_code != 0
+            assert "limit" in result.output.lower()
+
+    def test_search_handles_linkedin_rate_limit_error(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that search handles LinkedIn's rate limit error."""
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.side_effect = (
+                LinkedInRateLimitError("Too many requests")
+            )
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show error
+            assert result.exit_code != 0
+
+    def test_search_displays_result_count(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that search displays the number of results found."""
+        sample_profiles = [
+            ConnectionProfile(
+                linkedin_urn_id=f"urn:li:member:{i}",
+                public_id=f"user-{i}",
+                first_name=f"User{i}",
+                last_name="Test",
+                headline="Engineer",
+                profile_url=f"https://linkedin.com/in/user-{i}",
+                connection_degree=1,
+                search_query="engineer",
+                found_at=datetime.now(UTC),
+            )
+            for i in range(5)
+        ]
+        with mock.patch("linkedin_scraper.cli.SearchOrchestrator") as mock_orch:
+            mock_orch.return_value.execute_search_with_company_name.return_value = sample_profiles
+            mock_orch.return_value.get_remaining_actions.return_value = 24
+            result = runner.invoke(app, ["search", "-k", "engineer"])
+            # Should show count of 5
+            assert "5" in result.output
 
 
 class TestExportCommand:

@@ -7,11 +7,21 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
+from linkedin_scraper.database import DatabaseService
 from linkedin_scraper.linkedin.client import LinkedInClient
-from linkedin_scraper.linkedin.exceptions import LinkedInAuthError
+from linkedin_scraper.linkedin.exceptions import (
+    LinkedInAuthError,
+    LinkedInRateLimitError,
+)
+from linkedin_scraper.models import ConnectionProfile
+from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
+from linkedin_scraper.rate_limit.service import RateLimiter
+from linkedin_scraper.search.filters import NetworkDepth
+from linkedin_scraper.search.orchestrator import SearchOrchestrator
 
 app = typer.Typer(
     name="linkedin-scraper",
@@ -176,8 +186,112 @@ def login(
     console.print(f"[green]Success! Cookie stored for account '[bold]{account}[/bold]'.[/green]")
 
 
+def _parse_degrees(degree_str: str) -> list[NetworkDepth]:
+    """Parse comma-separated degree string into NetworkDepth list.
+
+    Args:
+        degree_str: Comma-separated string of degrees (e.g., "1,2" or "1,2,3").
+
+    Returns:
+        List of NetworkDepth enum values.
+    """
+    degree_map = {
+        "1": NetworkDepth.FIRST,
+        "2": NetworkDepth.SECOND,
+        "3": NetworkDepth.THIRD,
+    }
+    depths = []
+    for part in degree_str.split(","):
+        part = part.strip()
+        if part in degree_map:
+            depths.append(degree_map[part])
+    return depths if depths else [NetworkDepth.FIRST, NetworkDepth.SECOND]
+
+
+def _render_results_table(profiles: list[ConnectionProfile]) -> Table:
+    """Render search results as a Rich table.
+
+    Args:
+        profiles: List of ConnectionProfile objects to display.
+
+    Returns:
+        Rich Table with formatted results.
+    """
+    table = Table(title="Search Results", show_lines=False)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Headline", style="white", max_width=40)
+    table.add_column("Location", style="green", max_width=20)
+    table.add_column("Degree", style="yellow", width=6)
+
+    for idx, profile in enumerate(profiles, 1):
+        name = f"{profile.first_name} {profile.last_name}"
+        headline = profile.headline or ""
+        if len(headline) > 40:
+            headline = headline[:37] + "..."
+        location = profile.location or ""
+        if len(location) > 20:
+            location = location[:17] + "..."
+
+        degree_colors = {1: "green", 2: "yellow", 3: "red"}
+        degree_style = degree_colors.get(profile.connection_degree, "white")
+        degree_text = f"[{degree_style}]{profile.connection_degree}[/{degree_style}]"
+
+        table.add_row(str(idx), name, headline, location, degree_text)
+
+    return table
+
+
 @app.command()
-def search() -> None:
+def search(
+    keywords: Annotated[
+        str,
+        typer.Option(
+            "--keywords",
+            "-k",
+            help="Search keywords (job title, skills, etc.).",
+        ),
+    ],
+    company: Annotated[
+        str | None,
+        typer.Option(
+            "--company",
+            "-c",
+            help="Company name to filter by.",
+        ),
+    ] = None,
+    location: Annotated[
+        str | None,
+        typer.Option(
+            "--location",
+            "-l",
+            help="Location filter.",
+        ),
+    ] = None,
+    degree: Annotated[
+        str,
+        typer.Option(
+            "--degree",
+            "-d",
+            help="Connection degrees, comma-separated (e.g., '1,2' for 1st and 2nd).",
+        ),
+    ] = "1,2",
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit",
+            help="Maximum number of results to return.",
+        ),
+    ] = 100,
+    account: Annotated[
+        str,
+        typer.Option(
+            "--account",
+            "-a",
+            help="Account name to use for authentication.",
+        ),
+    ] = "default",
+) -> None:
     """Search LinkedIn connections with filters.
 
     Search for connections by keywords, company, location, and connection degree.
@@ -186,7 +300,65 @@ def search() -> None:
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
 
-    console.print("[yellow]Search command not implemented yet.[/yellow]")
+    settings = get_settings()
+    db_service = DatabaseService(db_path=settings.db_path)
+    db_service.init_db()
+    rate_limiter = RateLimiter(db_service, settings)
+    cookie_manager = CookieManager()
+    orchestrator = SearchOrchestrator(db_service, rate_limiter, cookie_manager)
+
+    # Parse degree filter
+    network_depths = _parse_degrees(degree)
+
+    console.print(f"[dim]Searching for '{keywords}'...[/dim]")
+
+    try:
+        profiles = orchestrator.execute_search_with_company_name(
+            keywords=keywords,
+            company_name=company,
+            location=location,
+            network_depths=network_depths,
+            limit=limit,
+            account=account,
+        )
+    except LinkedInAuthError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        console.print()
+        console.print("[yellow]Please run 'linkedin-scraper login' first.[/yellow]")
+        console.print()
+        console.print(
+            Panel(
+                get_cookie_instructions(),
+                title="How to Get a Cookie",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(code=1) from None
+    except RateLimitExceeded as e:
+        console.print("[red]Error: Rate limit exceeded.[/red]")
+        console.print(f"[yellow]{e}[/yellow]")
+        raise typer.Exit(code=1) from None
+    except LinkedInRateLimitError as e:
+        console.print("[red]Error: LinkedIn rate limit triggered.[/red]")
+        console.print(f"[yellow]{e}[/yellow]")
+        console.print("[dim]Wait a few minutes and try again.[/dim]")
+        raise typer.Exit(code=1) from None
+
+    # Display results
+    if profiles:
+        table = _render_results_table(profiles)
+        console.print(table)
+        console.print()
+        console.print(f"[green]Found {len(profiles)} result(s).[/green]")
+    else:
+        console.print("[yellow]No results found.[/yellow]")
+
+    # Show rate limit status
+    remaining = orchestrator.get_remaining_actions()
+    remaining_style = "red" if remaining < 5 else "green"
+    console.print(
+        f"[dim]Remaining searches today: [{remaining_style}]{remaining}[/{remaining_style}][/dim]"
+    )
 
 
 @app.command()
