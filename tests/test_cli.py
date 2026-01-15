@@ -66,6 +66,22 @@ class TestCLIBasics:
         assert result.exit_code == 0
         assert "linkedin-scraper" in result.output.lower() or "Usage" in result.output
 
+    def test_app_has_version_flag(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that the --version flag displays version."""
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "linkedin-scraper" in result.output
+        # Should contain version number format (e.g., 0.1.0)
+        import re
+
+        assert re.search(r"\d+\.\d+\.\d+", result.output)
+
+    def test_version_short_flag(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that -V also displays version."""
+        result = runner.invoke(app, ["-V"])
+        assert result.exit_code == 0
+        assert "linkedin-scraper" in result.output
+
     def test_app_has_login_command(self, runner: CliRunner, temp_settings_env: str) -> None:
         """Test that the login command exists."""
         result = runner.invoke(app, ["login", "--help"])
@@ -120,13 +136,18 @@ class TestLoginCommand:
     def test_login_successful_stores_cookie(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
-        """Test that login stores cookie on success."""
-        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        """Test that login stores cookies on success."""
+        valid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_jsessionid = "ajax:1234567890123456789"
         with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
             mock_cm.return_value.validate_cookie_format.return_value = True
-            result = runner.invoke(app, ["login", "--no-validate"], input=f"{valid_cookie}\n")
-            # Should store the cookie
-            mock_cm.return_value.store_cookie.assert_called_once_with(valid_cookie, "default")
+            result = runner.invoke(
+                app, ["login", "--no-validate"], input=f"{valid_li_at}\n{valid_jsessionid}\n"
+            )
+            # Should store the cookies
+            mock_cm.return_value.store_cookies.assert_called_once_with(
+                valid_li_at, valid_jsessionid, "default"
+            )
             # Should show success
             assert "success" in result.output.lower() or "stored" in result.output.lower()
 
@@ -134,78 +155,91 @@ class TestLoginCommand:
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
         """Test that login respects --account option."""
-        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_jsessionid = "ajax:1234567890123456789"
         with mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm:
             mock_cm.return_value.validate_cookie_format.return_value = True
             runner.invoke(
                 app,
                 ["login", "--account", "work", "--no-validate"],
-                input=f"{valid_cookie}\n",
+                input=f"{valid_li_at}\n{valid_jsessionid}\n",
             )
             # Should store with custom account name
-            mock_cm.return_value.store_cookie.assert_called_once_with(valid_cookie, "work")
+            mock_cm.return_value.store_cookies.assert_called_once_with(
+                valid_li_at, valid_jsessionid, "work"
+            )
 
     def test_login_validates_cookie_online_by_default(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
-        """Test that login validates cookie with LinkedIn by default."""
-        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        """Test that login validates cookies with LinkedIn by default."""
+        valid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_jsessionid = "ajax:1234567890123456789"
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
         ):
             mock_cm.return_value.validate_cookie_format.return_value = True
             mock_li.return_value.validate_session.return_value = True
-            runner.invoke(app, ["login"], input=f"{valid_cookie}\n")
+            runner.invoke(app, ["login"], input=f"{valid_li_at}\n{valid_jsessionid}\n")
             # Should create LinkedInClient and validate session
-            mock_li.assert_called_once_with(valid_cookie)
+            mock_li.assert_called_once_with(valid_li_at, valid_jsessionid)
             mock_li.return_value.validate_session.assert_called_once()
 
     def test_login_skips_validation_with_no_validate_flag(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
         """Test that --no-validate skips online validation."""
-        valid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        valid_jsessionid = "ajax:1234567890123456789"
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
         ):
             mock_cm.return_value.validate_cookie_format.return_value = True
-            runner.invoke(app, ["login", "--no-validate"], input=f"{valid_cookie}\n")
+            runner.invoke(
+                app, ["login", "--no-validate"], input=f"{valid_li_at}\n{valid_jsessionid}\n"
+            )
             # Should NOT create LinkedInClient
             mock_li.assert_not_called()
-            # Cookie should still be stored
-            mock_cm.return_value.store_cookie.assert_called_once()
+            # Cookies should still be stored
+            mock_cm.return_value.store_cookies.assert_called_once()
 
     def test_login_fails_on_invalid_session(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
         """Test that login fails if session validation fails."""
-        invalid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        invalid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        invalid_jsessionid = "ajax:1234567890123456789"
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
         ):
             mock_cm.return_value.validate_cookie_format.return_value = True
             mock_li.return_value.validate_session.return_value = False
-            result = runner.invoke(app, ["login"], input=f"{invalid_cookie}\n")
+            result = runner.invoke(
+                app, ["login"], input=f"{invalid_li_at}\n{invalid_jsessionid}\n"
+            )
             # Should show error about invalid session
             assert result.exit_code != 0 or "invalid" in result.output.lower()
-            # Should NOT store the cookie
-            mock_cm.return_value.store_cookie.assert_not_called()
+            # Should NOT store the cookies
+            mock_cm.return_value.store_cookies.assert_not_called()
 
     def test_login_shows_instructions_on_auth_error(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
         """Test that login shows cookie instructions on auth error."""
-        invalid_cookie = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        invalid_li_at = "AQEDAQEBAAAAAAAAAAAAAAFZXyYZWFhW"
+        invalid_jsessionid = "ajax:1234567890123456789"
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
         ):
             mock_cm.return_value.validate_cookie_format.return_value = True
             mock_li.side_effect = LinkedInAuthError("Auth failed")
-            result = runner.invoke(app, ["login"], input=f"{invalid_cookie}\n")
+            result = runner.invoke(
+                app, ["login"], input=f"{invalid_li_at}\n{invalid_jsessionid}\n"
+            )
             # Should show instructions about getting cookie
             assert (
                 "instructions" in result.output.lower()
@@ -684,14 +718,17 @@ class TestStatusCommand:
     def test_status_with_account_option_validates_cookie(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
-        """Test that --account option validates the specific account's cookie."""
+        """Test that --account option validates the specific account's cookies."""
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
             mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
         ):
             mock_cm.return_value.list_accounts.return_value = ["work"]
-            mock_cm.return_value.get_cookie.return_value = "valid_cookie"
+            mock_cm.return_value.get_cookies.return_value = {
+                "li_at": "valid_li_at",
+                "JSESSIONID": "ajax:123",
+            }
             mock_li.return_value.validate_session.return_value = True
             mock_stats.return_value = {
                 "total_connections": 0,
@@ -703,22 +740,25 @@ class TestStatusCommand:
             }
             result = runner.invoke(app, ["status", "--account", "work"])
             assert result.exit_code == 0
-            # Should get cookie for the specified account
-            mock_cm.return_value.get_cookie.assert_called_with("work")
+            # Should get cookies for the specified account
+            mock_cm.return_value.get_cookies.assert_called_with("work")
             # Should validate session
             mock_li.return_value.validate_session.assert_called_once()
 
     def test_status_shows_valid_session_message(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
-        """Test that status shows valid session message when cookie is valid."""
+        """Test that status shows valid session message when cookies are valid."""
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
             mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
         ):
             mock_cm.return_value.list_accounts.return_value = ["default"]
-            mock_cm.return_value.get_cookie.return_value = "valid_cookie"
+            mock_cm.return_value.get_cookies.return_value = {
+                "li_at": "valid_li_at",
+                "JSESSIONID": "ajax:123",
+            }
             mock_li.return_value.validate_session.return_value = True
             mock_stats.return_value = {
                 "total_connections": 0,
@@ -736,14 +776,17 @@ class TestStatusCommand:
     def test_status_shows_invalid_session_message(
         self, runner: CliRunner, temp_settings_env: str
     ) -> None:
-        """Test that status shows invalid session message when cookie is expired."""
+        """Test that status shows invalid session message when cookies are expired."""
         with (
             mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
             mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
             mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
         ):
             mock_cm.return_value.list_accounts.return_value = ["default"]
-            mock_cm.return_value.get_cookie.return_value = "expired_cookie"
+            mock_cm.return_value.get_cookies.return_value = {
+                "li_at": "expired_li_at",
+                "JSESSIONID": "ajax:123",
+            }
             mock_li.return_value.validate_session.return_value = False
             mock_stats.return_value = {
                 "total_connections": 0,
@@ -771,7 +814,7 @@ class TestStatusCommand:
             mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
         ):
             mock_cm.return_value.list_accounts.return_value = []
-            mock_cm.return_value.get_cookie.return_value = None
+            mock_cm.return_value.get_cookies.return_value = None
             mock_stats.return_value = {
                 "total_connections": 0,
                 "unique_companies": 0,

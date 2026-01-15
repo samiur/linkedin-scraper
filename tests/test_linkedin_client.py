@@ -18,17 +18,28 @@ class TestLinkedInClient:
 
     @patch("linkedin_scraper.linkedin.client.Linkedin")
     def test_init_creates_client_with_cookie(self, mock_linkedin_class: MagicMock) -> None:
-        """LinkedInClient should create underlying client with cookie auth."""
+        """LinkedInClient should create underlying client and set cookies manually."""
         mock_instance = MagicMock()
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie_value")
+        client = LinkedInClient(li_at="test_cookie_value", jsessionid="ajax:123")
 
+        # Should create client with authenticate=False (cookies set manually)
         mock_linkedin_class.assert_called_once()
         call_kwargs = mock_linkedin_class.call_args.kwargs
-        assert call_kwargs.get("cookies") == {"li_at": "test_cookie_value"}
+        assert call_kwargs.get("authenticate") is False
         assert call_kwargs.get("refresh_cookies") is False
         assert client._client == mock_instance
+
+        # Verify cookies were set on the session
+        session_cookies = mock_instance.client.session.cookies
+        session_cookies.set.assert_any_call("li_at", "test_cookie_value", domain=".linkedin.com")
+        session_cookies.set.assert_any_call("JSESSIONID", '"ajax:123"', domain=".linkedin.com")
+
+        # Verify csrf-token header was set
+        mock_instance.client.session.headers.__setitem__.assert_called_with(
+            "csrf-token", "ajax:123"
+        )
 
     @patch("linkedin_scraper.linkedin.client.Linkedin")
     def test_init_raises_auth_error_on_invalid_cookie(self, mock_linkedin_class: MagicMock) -> None:
@@ -36,7 +47,7 @@ class TestLinkedInClient:
         mock_linkedin_class.side_effect = Exception("CHALLENGE")
 
         with pytest.raises(LinkedInAuthError) as exc_info:
-            LinkedInClient(cookie="invalid_cookie")
+            LinkedInClient(li_at="invalid_cookie")
 
         assert "CHALLENGE" in str(exc_info.value) or "authentication" in str(exc_info.value).lower()
 
@@ -51,7 +62,7 @@ class TestLinkedInClient:
         }
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="valid_cookie")
+        client = LinkedInClient(li_at="valid_cookie")
         result = client.validate_session()
 
         assert result is True
@@ -66,7 +77,7 @@ class TestLinkedInClient:
         mock_instance.get_user_profile.side_effect = Exception("Session invalid")
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="expired_cookie")
+        client = LinkedInClient(li_at="expired_cookie")
         result = client.validate_session()
 
         assert result is False
@@ -80,7 +91,7 @@ class TestLinkedInClient:
         mock_instance.get_user_profile.return_value = None
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="some_cookie")
+        client = LinkedInClient(li_at="some_cookie")
         result = client.validate_session()
 
         assert result is False
@@ -94,7 +105,7 @@ class TestLinkedInClient:
         }
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="valid_cookie")
+        client = LinkedInClient(li_at="valid_cookie")
         profile_id = client.get_profile_id()
 
         assert profile_id == "john-doe-123"
@@ -108,7 +119,7 @@ class TestLinkedInClient:
         mock_instance.get_user_profile.return_value = {}
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="valid_cookie")
+        client = LinkedInClient(li_at="valid_cookie")
         profile_id = client.get_profile_id()
 
         assert profile_id is None
@@ -120,7 +131,7 @@ class TestLinkedInClient:
         mock_instance.get_user_profile.side_effect = Exception("API Error")
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="valid_cookie")
+        client = LinkedInClient(li_at="valid_cookie")
         profile_id = client.get_profile_id()
 
         assert profile_id is None
@@ -137,7 +148,7 @@ class TestLinkedInClient:
         }
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="valid_cookie")
+        client = LinkedInClient(li_at="valid_cookie")
         profile_id = client.get_profile_id()
 
         # Should prefer miniProfile.publicIdentifier
@@ -176,7 +187,7 @@ class TestLinkedInClientErrorHandling:
         mock_linkedin_class.side_effect = Exception("429 Too Many Requests")
 
         with pytest.raises(LinkedInRateLimitError):
-            LinkedInClient(cookie="test_cookie")
+            LinkedInClient(li_at="test_cookie")
 
     @patch("linkedin_scraper.linkedin.client.Linkedin")
     def test_init_raises_auth_error_on_401(self, mock_linkedin_class: MagicMock) -> None:
@@ -184,7 +195,7 @@ class TestLinkedInClientErrorHandling:
         mock_linkedin_class.side_effect = Exception("401 Unauthorized")
 
         with pytest.raises(LinkedInAuthError):
-            LinkedInClient(cookie="test_cookie")
+            LinkedInClient(li_at="test_cookie")
 
     @patch("linkedin_scraper.linkedin.client.Linkedin")
     def test_init_wraps_unknown_errors_in_linkedin_error(
@@ -194,7 +205,7 @@ class TestLinkedInClientErrorHandling:
         mock_linkedin_class.side_effect = Exception("Unknown network error")
 
         with pytest.raises(LinkedInError):
-            LinkedInClient(cookie="test_cookie")
+            LinkedInClient(li_at="test_cookie")
 
 
 class TestLinkedInClientSearchPeople:
@@ -212,7 +223,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(keywords="software engineer")
         results = client.search_people(search_filter)
 
@@ -231,7 +242,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(
             keywords="engineer",
             current_company_ids=["12345", "67890"],
@@ -250,7 +261,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import NetworkDepth, SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(
             keywords="manager",
             network_depths=[NetworkDepth.FIRST, NetworkDepth.SECOND],
@@ -269,7 +280,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(
             keywords="developer",
             regions=["us:0", "uk:0"],
@@ -288,7 +299,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(keywords="analyst", limit=50)
         client.search_people(search_filter)
 
@@ -314,7 +325,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(keywords="engineer")
         results = client.search_people(search_filter)
 
@@ -330,7 +341,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(keywords="engineer")
 
         with pytest.raises(LinkedInRateLimitError):
@@ -345,7 +356,7 @@ class TestLinkedInClientSearchPeople:
 
         from linkedin_scraper.search.filters import NetworkDepth, SearchFilter
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         search_filter = SearchFilter(
             keywords="product manager",
             network_depths=[NetworkDepth.FIRST, NetworkDepth.SECOND, NetworkDepth.THIRD],
@@ -376,7 +387,7 @@ class TestLinkedInClientSearchCompanies:
         ]
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         results = client.search_companies("Google")
 
         assert len(results) == 2
@@ -391,7 +402,7 @@ class TestLinkedInClientSearchCompanies:
         mock_instance.search_companies.return_value = []
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         client.search_companies("Acme", limit=3)
 
         call_kwargs = mock_instance.search_companies.call_args.kwargs
@@ -404,7 +415,7 @@ class TestLinkedInClientSearchCompanies:
         mock_instance.search_companies.return_value = []
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         client.search_companies("Microsoft")
 
         call_kwargs = mock_instance.search_companies.call_args.kwargs
@@ -425,7 +436,7 @@ class TestLinkedInClientSearchCompanies:
         mock_instance.search_companies.return_value = expected_results
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         results = client.search_companies("Apple")
 
         assert results == expected_results
@@ -438,7 +449,7 @@ class TestLinkedInClientSearchCompanies:
         mock_instance.search_companies.side_effect = Exception("429 Rate limited")
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
 
         with pytest.raises(LinkedInRateLimitError):
             client.search_companies("Test Company")
@@ -450,7 +461,7 @@ class TestLinkedInClientSearchCompanies:
         mock_instance.search_companies.side_effect = Exception("401 Unauthorized")
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
 
         with pytest.raises(LinkedInAuthError):
             client.search_companies("Test Company")
@@ -469,7 +480,7 @@ class TestLinkedInClientResolveCompanyId:
         ]
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         company_id = client.resolve_company_id("Google")
 
         assert company_id == "1441"
@@ -483,7 +494,7 @@ class TestLinkedInClientResolveCompanyId:
         mock_instance.search_companies.return_value = []
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         company_id = client.resolve_company_id("NonexistentCompany12345")
 
         assert company_id is None
@@ -499,7 +510,7 @@ class TestLinkedInClientResolveCompanyId:
         ]
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         company_id = client.resolve_company_id("Anthropic")
 
         assert company_id == "28627158"
@@ -515,7 +526,7 @@ class TestLinkedInClientResolveCompanyId:
         ]
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         company_id = client.resolve_company_id("Meta")
 
         assert company_id == "10667"
@@ -531,7 +542,7 @@ class TestLinkedInClientResolveCompanyId:
         ]
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
         company_id = client.resolve_company_id("Some Company")
 
         assert company_id is None
@@ -543,7 +554,7 @@ class TestLinkedInClientResolveCompanyId:
         mock_instance.search_companies.side_effect = Exception("429 Rate limited")
         mock_linkedin_class.return_value = mock_instance
 
-        client = LinkedInClient(cookie="test_cookie")
+        client = LinkedInClient(li_at="test_cookie")
 
         with pytest.raises(LinkedInRateLimitError):
             client.resolve_company_id("Test")

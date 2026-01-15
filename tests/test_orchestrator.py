@@ -58,7 +58,10 @@ def rate_limiter(db_service: DatabaseService, mock_settings: Settings) -> RateLi
 def mock_cookie_manager() -> mock.Mock:
     """Create a mock CookieManager."""
     manager = mock.Mock(spec=CookieManager)
-    manager.get_cookie.return_value = "test-li-at-cookie"
+    manager.get_cookies.return_value = {
+        "li_at": "test-li-at-cookie",
+        "JSESSIONID": "ajax:test-jsessionid",
+    }
     return manager
 
 
@@ -151,7 +154,7 @@ class TestExecuteSearch:
 
             orchestrator.execute_search(search_filter, account="work")
 
-            mock_cookie_manager.get_cookie.assert_called_once_with("work")
+            mock_cookie_manager.get_cookies.assert_called_once_with("work")
 
     def test_execute_search_raises_when_no_cookie_found(
         self,
@@ -159,8 +162,8 @@ class TestExecuteSearch:
         rate_limiter: RateLimiter,
         mock_cookie_manager: mock.Mock,
     ) -> None:
-        """Test that execute_search raises error when no cookie is found."""
-        mock_cookie_manager.get_cookie.return_value = None
+        """Test that execute_search raises error when no cookies are found."""
+        mock_cookie_manager.get_cookies.return_value = None
         orchestrator = SearchOrchestrator(
             db_service=db_service,
             rate_limiter=rate_limiter,
@@ -168,7 +171,7 @@ class TestExecuteSearch:
         )
         search_filter = SearchFilter(keywords="engineer", limit=10)
 
-        with pytest.raises(LinkedInAuthError, match="No cookie found"):
+        with pytest.raises(LinkedInAuthError, match="No cookies found"):
             orchestrator.execute_search(search_filter, account="default")
 
     def test_execute_search_checks_rate_limit(
