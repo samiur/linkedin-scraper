@@ -1,19 +1,22 @@
-# LinkedIn Connection Search Tool - Implementation Plan
+# LinkedIn Network Scraper - Implementation Plan
 
 ## Overview
 
-This document contains a step-by-step blueprint for building the LinkedIn Connection Search CLI tool. The plan is broken into small, iterative prompts that can be executed in sequence by a code-generation LLM using TDD practices.
+This document contains a step-by-step blueprint for building the LinkedIn Network Scraper. The plan is broken into phases, with Phase 1 (CLI tool) completed and Phase 2 (Web Application) outlined below.
 
 ## Current State
 
-The project has foundational work in place:
-- `pyproject.toml` with dependencies (typer, rich, sqlmodel, keyring, linkedin-api, pydantic)
+**Phase 1 Complete:** The CLI tool is fully functional with:
 - SQLModels: `ConnectionProfile`, `RateLimitEntry`, `ActionType`
 - Search filters: `SearchFilter`, `NetworkDepth`
-- Project structure: `src/linkedin_scraper/`
+- Services: `DatabaseService`, `CookieManager`, `RateLimiter`, `LinkedInClient`
+- Orchestration: `SearchOrchestrator` coordinating all search operations
+- CLI: Full Typer CLI with login, search, status, export commands
+- Export: CSV export functionality
 
-## Architecture Summary
+## Architecture Evolution
 
+### Phase 1 Architecture (CLI - Complete)
 ```
 CLI (Typer) → Search Orchestrator → LinkedIn Client
                     ↓                     ↓
@@ -24,22 +27,53 @@ CLI (Typer) → Search Orchestrator → LinkedIn Client
               Export Layer (CSV, Rich)
 ```
 
-## Implementation Phases
+### Phase 2 Architecture (Web App)
+```
+React Frontend (Next.js)
+        ↓
+FastAPI Backend ←─────────────────────────┐
+        ↓                                 │
+  ┌─────┴─────┐                          │
+  │           │                          │
+Space       Search                    Cookie
+Service    Orchestrator              Service
+  │           │                          │
+  └─────┬─────┘                          │
+        ↓                                │
+PostgreSQL Database ←────────────────────┘
+        │
+        └── Models: Space, Contributor, SearchResult
+```
 
-### Phase 1: Core Infrastructure (Prompts 1-4)
-Database setup, cookie management, and basic CLI skeleton.
+---
 
-### Phase 2: Rate Limiting (Prompts 5-7)
-Rate limiter service with persistence and delay logic.
+## Phase 2: Web Application
 
-### Phase 3: LinkedIn Integration (Prompts 8-10)
-LinkedIn client wrapper and search functionality.
+### Implementation Phases
 
-### Phase 4: CLI Commands (Prompts 11-14)
-Full CLI implementation with all commands.
+**Phase 2.1:** Database Schema & Models (Prompts 18-20)
+New models for spaces, contributors (with CookieStatus), and search results.
 
-### Phase 5: Export & Polish (Prompts 15-17)
-CSV export, rich output formatting, and final integration.
+**Phase 2.2:** Core API Services (Prompts 21-24)
+Space management, cookie service with validation/refresh, and search aggregation.
+
+**Phase 2.3:** API Endpoints (Prompts 25-28)
+FastAPI routes for spaces, contributors, and search operations.
+
+**Phase 2.4:** Frontend Foundation (Prompts 29-32)
+Next.js setup, API client, and basic layouts.
+
+**Phase 2.5:** Cookie Management UI (Prompts 33-36) ⭐ PRIORITY
+Space creation, admin dashboard with cookie health, and cookie refresh flow.
+
+**Phase 2.6:** Background Cookie Validation (Prompt 37) ⭐ PRIORITY
+Proactive validation and refresh notifications.
+
+**Phase 2.7:** Search & Export UI (Prompts 38-41)
+Search interface, results table, and export functionality.
+
+**Phase 2.8:** Polish & Integration (Prompts 42-47)
+Rate limiting, error handling, testing, docs, and deployment.
 
 ---
 
@@ -47,530 +81,1270 @@ CSV export, rich output formatting, and final integration.
 
 ---
 
-### Prompt 1: Database Service Foundation
+### Prompt 18: Web Database Models - Space
 
 ```text
-We're building a LinkedIn connection search CLI tool. The project already has SQLModels defined in `src/linkedin_scraper/models/`.
+We're extending the LinkedIn Network Scraper CLI into a web application. The CLI is complete in `src/linkedin_scraper/`.
 
-Create a database service module that:
-1. Manages SQLite database initialization and connections
-2. Provides CRUD operations for the existing models
-3. Uses SQLModel's session management
+Create the web application backend structure and Space model:
 
 Requirements:
-- Create `src/linkedin_scraper/database/__init__.py` and `src/linkedin_scraper/database/service.py`
-- The database file should be stored at `~/.linkedin-scraper/data.db` (create directory if needed)
-- Implement a `DatabaseService` class with methods:
-  - `__init__(self, db_path: Path | None = None)` - uses default path if none provided
-  - `init_db(self)` - creates tables
-  - `get_session(self)` - returns a context manager for database sessions
-  - `save_connection(self, profile: ConnectionProfile) -> ConnectionProfile`
-  - `get_connections(self, limit: int = 100, offset: int = 0) -> list[ConnectionProfile]`
-  - `get_connection_by_urn(self, urn_id: str) -> ConnectionProfile | None`
-- All code must be type-checked with mypy strict mode
-- Follow TDD: write tests first in `tests/test_database.py`
-- Tests should use a temporary database file
-- Add ABOUTME comments to new files
+1. Create new directory structure:
+   - `src/web/` - FastAPI backend
+   - `src/web/models/` - SQLModel definitions
+   - `src/web/models/__init__.py`
+   - `src/web/models/space.py`
 
-The existing models are:
-- `ConnectionProfile` in `models/connection.py` with fields: id, linkedin_urn_id, public_id, first_name, last_name, headline, location, current_company, current_title, profile_url, connection_degree, search_query, found_at
-- `RateLimitEntry` in `models/rate_limit.py` with fields: id, action_type, timestamp
+2. Implement `Space` model in `src/web/models/space.py`:
+   - `id: UUID` - Primary key (uuid4)
+   - `name: str` - Human-readable space name
+   - `description: str | None` - Optional description
+   - `slug: str` - URL-friendly identifier (unique, indexed)
+   - `owner_email: str` - Email of space creator
+   - `search_criteria: dict` - JSON field storing default search params (keywords, company, location, degrees)
+   - `is_active: bool` - Whether space accepts contributions (default True)
+   - `created_at: datetime` - Creation timestamp
+   - `updated_at: datetime` - Last update timestamp
+
+3. Add a `generate_slug()` function that creates URL-safe slugs from space names
+
+4. All code must pass mypy strict mode
+5. Follow TDD: write tests first in `tests/web/test_space_model.py`
+6. Add ABOUTME comments to new files
+
+Start with tests, then implement the model.
+```
+
+---
+
+### Prompt 19: Web Database Models - Contributor
+
+```text
+Continue building the web application. We have the Space model.
+
+Create the Contributor model for tracking cookie contributions:
+
+Requirements:
+1. Create `src/web/models/contributor.py`
+
+2. Implement `Contributor` model:
+   - `id: UUID` - Primary key
+   - `space_id: UUID` - Foreign key to Space (indexed)
+   - `name: str` - Contributor's display name
+   - `email: str | None` - Optional email for notifications
+   - `cookies_encrypted: str` - Encrypted cookie data (li_at + JSESSIONID as JSON)
+   - `is_valid: bool` - Whether cookies are currently valid (default True)
+   - `validation_error: str | None` - Error message if validation failed (e.g., "Session expired", "Invalid credentials")
+   - `last_validated_at: datetime | None` - Last validation timestamp
+   - `last_used_at: datetime | None` - Last time cookies were used for a search
+   - `contributed_at: datetime` - When cookies were submitted
+   - `updated_at: datetime | None` - When cookies were last updated/refreshed
+   - `revoked_at: datetime | None` - When access was revoked (null if active)
+
+3. Create relationship: Space has many Contributors
+
+4. Implement cookie encryption/decryption helpers:
+   - `encrypt_cookies(cookies: dict[str, str], key: bytes) -> str`
+   - `decrypt_cookies(encrypted: str, key: bytes) -> dict[str, str]`
+   - Use Fernet symmetric encryption from cryptography library
+
+5. Create `CookieStatus` enum:
+   - `VALID` - Cookies are working
+   - `EXPIRED` - Session has expired
+   - `INVALID` - Credentials are invalid/revoked
+   - `UNKNOWN` - Not yet validated
+   - `RATE_LIMITED` - LinkedIn rate limited this account
+
+6. All code must pass mypy strict mode
+7. Follow TDD: write tests first in `tests/web/test_contributor_model.py`
+8. Add ABOUTME comments
+
+Start with tests, then implement the model.
+```
+
+---
+
+### Prompt 20: Web Database Models - Search Result
+
+```text
+Continue building the web application. We have Space and Contributor models.
+
+Create the SearchResult model for aggregated search results:
+
+Requirements:
+1. Create `src/web/models/search_result.py`
+
+2. Implement `SearchResult` model:
+   - `id: UUID` - Primary key
+   - `space_id: UUID` - Foreign key to Space (indexed)
+   - `contributor_id: UUID` - Foreign key to Contributor who found this result
+   - `linkedin_urn_id: str` - LinkedIn profile URN (indexed)
+   - `public_id: str` - URL-friendly LinkedIn ID
+   - `first_name: str`
+   - `last_name: str`
+   - `headline: str | None`
+   - `location: str | None`
+   - `current_company: str | None`
+   - `current_title: str | None`
+   - `profile_url: str`
+   - `connection_degree: int` - Degree from the contributor
+   - `mutual_connection_name: str | None` - Name of mutual connection (for intro path)
+   - `found_at: datetime`
+
+3. Add composite unique constraint on (space_id, linkedin_urn_id) for deduplication
+
+4. Create `src/web/models/__init__.py` exporting all models
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests first in `tests/web/test_search_result_model.py`
+7. Add ABOUTME comments
+
+Start with tests, then implement the model.
+```
+
+---
+
+### Prompt 21: Web Database Service
+
+```text
+Continue building the web application. We have all web models defined.
+
+Create the web database service:
+
+Requirements:
+1. Create `src/web/database/__init__.py` and `src/web/database/service.py`
+
+2. Implement `WebDatabaseService` class:
+   - `__init__(self, database_url: str)` - Initialize with connection string
+   - `init_db(self)` - Create tables
+   - `get_session(self)` - Context manager for sessions
+
+   Space operations:
+   - `create_space(self, space: Space) -> Space`
+   - `get_space_by_slug(self, slug: str) -> Space | None`
+   - `get_space_by_id(self, space_id: UUID) -> Space | None`
+   - `list_spaces_by_owner(self, email: str) -> list[Space]`
+   - `update_space(self, space: Space) -> Space`
+   - `deactivate_space(self, space_id: UUID) -> None`
+
+   Contributor operations:
+   - `add_contributor(self, contributor: Contributor) -> Contributor`
+   - `get_contributors_for_space(self, space_id: UUID, include_revoked: bool = False) -> list[Contributor]`
+   - `revoke_contributor(self, contributor_id: UUID) -> None`
+   - `update_contributor_validity(self, contributor_id: UUID, is_valid: bool) -> None`
+
+   Search result operations:
+   - `save_search_result(self, result: SearchResult) -> SearchResult`
+   - `get_results_for_space(self, space_id: UUID, limit: int = 100, offset: int = 0) -> list[SearchResult]`
+   - `get_deduplicated_results(self, space_id: UUID) -> list[SearchResult]` - Returns unique profiles
+
+3. Support PostgreSQL via SQLModel
+
+4. All code must pass mypy strict mode
+5. Follow TDD: write tests first in `tests/web/test_database_service.py`
+6. Use test PostgreSQL database or SQLite for tests
+7. Add ABOUTME comments
 
 Start with tests, then implement the service.
 ```
 
 ---
 
-### Prompt 2: Cookie Manager Service
+### Prompt 22: Space Service
 
 ```text
-Continue building the LinkedIn connection search CLI. We now have a database service in place.
+Continue building the web application. We have the database service.
 
-Create a cookie manager service that securely stores LinkedIn cookies using the OS keyring:
+Create a Space service for business logic:
 
 Requirements:
-- Create `src/linkedin_scraper/auth/__init__.py` and `src/linkedin_scraper/auth/cookie_manager.py`
-- Implement a `CookieManager` class with methods:
-  - `store_cookie(self, cookie: str, account_name: str = "default") -> None`
-  - `get_cookie(self, account_name: str = "default") -> str | None`
-  - `delete_cookie(self, account_name: str = "default") -> None`
-  - `list_accounts(self) -> list[str]`
-  - `validate_cookie_format(self, cookie: str) -> bool` - basic format validation (non-empty, reasonable length)
-- Use the `keyring` library for secure storage
-- Service name in keyring should be "linkedin-scraper"
-- Account names are stored as keyring usernames
-- Maintain a list of account names in the database or a separate config file at `~/.linkedin-scraper/accounts.json`
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_cookie_manager.py`
-- Tests should mock the keyring to avoid actual OS keyring access
-- Add ABOUTME comments to new files
-- Export CookieManager from the auth package
+1. Create `src/web/services/__init__.py` and `src/web/services/space_service.py`
+
+2. Implement `SpaceService` class:
+   - `__init__(self, db_service: WebDatabaseService)`
+
+   Methods:
+   - `create_space(self, name: str, owner_email: str, description: str | None, search_criteria: dict) -> Space`
+     - Generates unique slug from name
+     - Handles slug collisions by appending random suffix
+
+   - `get_space(self, slug: str) -> Space | None`
+
+   - `get_shareable_url(self, space: Space, base_url: str) -> str`
+     - Returns full URL for sharing: `{base_url}/s/{slug}`
+
+   - `get_space_stats(self, space_id: UUID) -> dict[str, Any]`
+     - Returns: contributor_count, valid_contributor_count, total_results, unique_results
+
+   - `can_accept_contributions(self, space: Space) -> bool`
+     - Checks is_active status
+
+3. All code must pass mypy strict mode
+4. Follow TDD: write tests first in `tests/web/test_space_service.py`
+5. Add ABOUTME comments
 
 Start with tests, then implement the service.
 ```
 
 ---
 
-### Prompt 3: Configuration Module
+### Prompt 23: Cookie Service
 
 ```text
-Continue building the LinkedIn connection search CLI. We have database and cookie manager services.
+Continue building the web application. We have the Space service.
 
-Create a configuration module for application settings:
-
-Requirements:
-- Create `src/linkedin_scraper/config.py`
-- Use pydantic-settings to define a `Settings` class with:
-  - `db_path: Path` - defaults to `~/.linkedin-scraper/data.db`
-  - `accounts_file: Path` - defaults to `~/.linkedin-scraper/accounts.json`
-  - `max_actions_per_day: int` - defaults to 25
-  - `min_delay_seconds: int` - defaults to 60
-  - `max_delay_seconds: int` - defaults to 120
-  - `tos_accepted: bool` - defaults to False
-  - `tos_accepted_at: datetime | None` - defaults to None
-- Settings can be overridden via environment variables with prefix `LINKEDIN_SCRAPER_`
-- Implement a `get_settings()` function that returns a cached Settings instance
-- Implement `ensure_data_dir()` function that creates `~/.linkedin-scraper/` if needed
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_config.py`
-- Tests should use temporary directories and environment variable mocking
-- Add ABOUTME comments to the file
-
-Start with tests, then implement the module.
-```
-
----
-
-### Prompt 4: CLI Skeleton with Typer
-
-```text
-Continue building the LinkedIn connection search CLI. We have database, cookie manager, and config modules.
-
-Create the CLI skeleton using Typer:
+Create a Cookie service for handling contributor cookies:
 
 Requirements:
-- Create `src/linkedin_scraper/cli.py`
-- Define a Typer app with the following command stubs:
-  - `login` - Store LinkedIn cookie (placeholder implementation for now)
-  - `search` - Search connections (placeholder implementation for now)
-  - `export` - Export results to CSV (placeholder implementation for now)
-  - `status` - Show rate limits and account status (placeholder implementation for now)
-- Each command should just print a "Not implemented yet" message for now
-- Add a callback that:
-  - Displays a ToS warning on first run if `tos_accepted` is False in settings
-  - Prompts user to accept before proceeding
-  - Saves acceptance to settings
-- Use Rich for console output formatting
-- The app should be accessible via `linkedin-scraper` command (already configured in pyproject.toml)
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_cli.py`
-- Tests should use Typer's CliRunner for testing commands
-- Add ABOUTME comments to the file
+1. Create `src/web/services/cookie_service.py`
 
-Start with tests, then implement the CLI.
-```
+2. Implement `CookieService` class:
+   - `__init__(self, db_service: WebDatabaseService, encryption_key: bytes)`
 
----
+   Methods:
+   - `add_contributor(self, space_id: UUID, name: str, email: str | None, li_at: str, jsessionid: str) -> Contributor`
+     - Encrypts cookies before storage
+     - Returns saved Contributor
 
-### Prompt 5: Rate Limiter Core Logic
+   - `update_contributor_cookies(self, contributor_id: UUID, li_at: str, jsessionid: str) -> Contributor`
+     - Updates existing contributor with fresh cookies
+     - Resets is_valid to True, clears validation_error
+     - Sets updated_at timestamp
+     - Returns updated Contributor
 
-```text
-Continue building the LinkedIn connection search CLI. We have the CLI skeleton in place.
+   - `validate_contributor_cookies(self, contributor_id: UUID) -> tuple[CookieStatus, str | None]`
+     - Decrypts cookies
+     - Creates LinkedInClient to test session
+     - Catches specific exceptions to determine status:
+       - LinkedInAuthError -> CookieStatus.EXPIRED or INVALID
+       - LinkedInRateLimitError -> CookieStatus.RATE_LIMITED
+       - Success -> CookieStatus.VALID
+     - Updates is_valid, validation_error, and last_validated_at
+     - Returns (status, error_message)
 
-Create a rate limiter service that enforces API call limits:
+   - `validate_all_contributors(self, space_id: UUID) -> dict[UUID, CookieStatus]`
+     - Validates all active contributors in a space
+     - Adds delay between validations to avoid triggering LinkedIn
+     - Returns map of contributor_id -> CookieStatus
 
-Requirements:
-- Create `src/linkedin_scraper/rate_limit/__init__.py` and `src/linkedin_scraper/rate_limit/service.py`
-- Implement a `RateLimiter` class that:
-  - Takes `DatabaseService` and `Settings` as dependencies
-  - Tracks actions using the existing `RateLimitEntry` model
-  - Methods:
-    - `can_perform_action(self, action_type: ActionType) -> bool` - checks if under daily limit
-    - `record_action(self, action_type: ActionType) -> None` - records an action
-    - `get_actions_today(self, action_type: ActionType | None = None) -> int` - count of today's actions
-    - `get_remaining_actions(self) -> int` - remaining actions for today
-    - `get_last_action_time(self) -> datetime | None` - timestamp of most recent action
-    - `seconds_until_next_allowed(self) -> int` - seconds to wait before next action (including jitter)
-- Daily limit resets at midnight UTC
-- Use the `max_actions_per_day` from Settings
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_rate_limiter.py`
-- Tests should use a mock database or in-memory database
-- Tests should mock datetime to test day boundary behavior
-- Add ABOUTME comments to new files
-- Export RateLimiter from the package
+   - `get_valid_cookies_for_space(self, space_id: UUID) -> list[tuple[Contributor, dict[str, str]]]`
+     - Returns list of (Contributor, decrypted_cookies) for valid contributors
+     - Includes contributor so caller knows who each cookie belongs to
+
+   - `get_contributors_needing_refresh(self, space_id: UUID, stale_days: int = 7) -> list[Contributor]`
+     - Returns contributors whose cookies haven't been validated in stale_days
+     - Or contributors marked as EXPIRED/INVALID
+
+   - `revoke_contributor(self, contributor_id: UUID) -> None`
+     - Marks contributor as revoked
+
+3. Import LinkedInClient and exceptions from existing linkedin_scraper package
+
+4. All code must pass mypy strict mode
+5. Follow TDD: write tests first in `tests/web/test_cookie_service.py`
+6. Mock LinkedInClient for validation tests
+7. Add ABOUTME comments
 
 Start with tests, then implement the service.
 ```
 
 ---
 
-### Prompt 6: Rate Limiter Delay Logic
+### Prompt 24: Aggregated Search Service
 
 ```text
-Continue building the LinkedIn connection search CLI. We have the core rate limiter.
+Continue building the web application. We have Cookie service.
 
-Extend the rate limiter with delay enforcement and jitter:
+Create an Aggregated Search service that searches across multiple contributors:
 
 Requirements:
-- Add to `RateLimiter` class in `src/linkedin_scraper/rate_limit/service.py`:
-  - `calculate_delay(self) -> float` - returns delay in seconds with random jitter
-  - `wait_if_needed(self) -> None` - sleeps if minimum delay hasn't passed since last action
-  - Use `min_delay_seconds` and `max_delay_seconds` from Settings
-  - Jitter should be random between min and max delay
-- Add a `RateLimitExceeded` exception class in `src/linkedin_scraper/rate_limit/exceptions.py`
-- Add a `check_and_wait(self, action_type: ActionType) -> None` method that:
-  - Raises `RateLimitExceeded` if daily limit reached
-  - Otherwise waits the appropriate delay
-  - Records the action after waiting
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_rate_limiter.py` (extend existing tests)
-- Tests should mock `time.sleep` to avoid actual delays
-- Tests should mock `random.uniform` for deterministic jitter testing
-- Add ABOUTME comments to new files
+1. Create `src/web/services/search_service.py`
 
-Start with tests, then implement the additions.
+2. Implement `AggregatedSearchService` class:
+   - `__init__(self, db_service: WebDatabaseService, cookie_service: CookieService)`
+
+   Methods:
+   - `execute_space_search(self, space_id: UUID, search_criteria: dict | None = None) -> list[SearchResult]`
+     - If search_criteria is None, uses space's default criteria
+     - Gets valid cookies from CookieService
+     - For each valid contributor:
+       - Creates LinkedInClient
+       - Executes search with space's criteria
+       - Saves results linked to contributor
+     - Returns all results (caller handles deduplication display)
+
+   - `get_deduplicated_results(self, space_id: UUID) -> list[SearchResult]`
+     - Returns unique profiles across all contributors
+     - Prefers results with lower connection_degree
+     - Includes mutual_connection_name from closest connection
+
+   - `export_results_csv(self, space_id: UUID) -> str`
+     - Returns CSV content as string
+     - Includes: name, headline, company, location, profile_url, connection_path
+     - Deduplicates before export
+
+3. Reuse SearchFilter and LinkedInClient from linkedin_scraper package
+
+4. All code must pass mypy strict mode
+5. Follow TDD: write tests first in `tests/web/test_search_service.py`
+6. Mock LinkedInClient
+7. Add ABOUTME comments
+
+Start with tests, then implement the service.
 ```
 
 ---
 
-### Prompt 7: Rate Limiter Status Display
+### Prompt 25: FastAPI App Setup
 
 ```text
-Continue building the LinkedIn connection search CLI. We have rate limiter with delay logic.
+Continue building the web application. We have all services.
 
-Add a status display helper for the rate limiter:
+Create the FastAPI application structure:
 
 Requirements:
-- Create `src/linkedin_scraper/rate_limit/display.py`
-- Implement a `RateLimitDisplay` class that:
-  - Takes `RateLimiter` as a dependency
-  - Methods:
-    - `get_status_dict(self) -> dict[str, Any]` - returns current status as dictionary
-    - `render_status(self) -> Panel` - returns a Rich Panel showing:
-      - Actions used today / max actions
-      - Remaining actions
-      - Time until daily reset
-      - Last action timestamp
-      - Warning if approaching limit (< 5 remaining)
-- Use Rich formatting (colors, progress bars if appropriate)
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_rate_limit_display.py`
-- Add ABOUTME comments to the file
-- Export RateLimitDisplay from the rate_limit package
+1. Create `src/web/api/__init__.py` and `src/web/api/app.py`
 
-Start with tests, then implement the display helper.
+2. Set up FastAPI application:
+   - Create main FastAPI app instance
+   - Add CORS middleware (configurable origins)
+   - Add request ID middleware for tracing
+   - Health check endpoint at `/api/health`
+   - API version prefix `/api/v1`
+
+3. Create `src/web/api/dependencies.py`:
+   - `get_db_service() -> WebDatabaseService` - Dependency injection
+   - `get_space_service() -> SpaceService`
+   - `get_cookie_service() -> CookieService`
+   - `get_search_service() -> AggregatedSearchService`
+
+4. Create `src/web/config.py` with `WebSettings` class:
+   - `database_url: str` - PostgreSQL connection string
+   - `encryption_key: str` - Fernet key for cookie encryption (from env)
+   - `cors_origins: list[str]` - Allowed CORS origins
+   - `base_url: str` - Base URL for shareable links
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests first in `tests/web/test_app.py`
+7. Add ABOUTME comments
+
+Start with tests, then implement the app setup.
 ```
 
 ---
 
-### Prompt 8: LinkedIn Client Wrapper
+### Prompt 26: Space API Endpoints
 
 ```text
-Continue building the LinkedIn connection search CLI. We have rate limiting in place.
+Continue building the web application. We have the FastAPI app setup.
 
-Create a LinkedIn client wrapper around the linkedin-api library:
+Create Space API endpoints:
 
 Requirements:
-- Create `src/linkedin_scraper/linkedin/__init__.py` and `src/linkedin_scraper/linkedin/client.py`
-- Implement a `LinkedInClient` class that:
-  - Wraps the `linkedin_api.Linkedin` class
-  - Constructor takes `cookie: str` and initializes the underlying client
-  - Provides a clean interface for search operations
-  - Methods:
-    - `__init__(self, cookie: str)` - creates authenticated client from li_at cookie
-    - `validate_session(self) -> bool` - tests if the session is valid by making a simple API call
-    - `get_profile_id(self) -> str | None` - returns the logged-in user's profile ID
-- Use `linkedin_api.Linkedin` with `refresh_cookies=False` since we're using stored cookies
-- Handle common exceptions from linkedin-api and wrap in custom exceptions
-- Create `src/linkedin_scraper/linkedin/exceptions.py` with:
-  - `LinkedInError` (base exception)
-  - `LinkedInAuthError` (invalid/expired cookie)
-  - `LinkedInRateLimitError` (LinkedIn's own rate limiting)
-- All code must pass mypy strict mode
-- Follow TDD: write tests first in `tests/test_linkedin_client.py`
-- Tests should mock the linkedin_api.Linkedin class to avoid real API calls
-- Add ABOUTME comments to new files
-- Export LinkedInClient and exceptions from the package
+1. Create `src/web/api/routes/__init__.py` and `src/web/api/routes/spaces.py`
 
-Start with tests, then implement the client.
+2. Create Pydantic schemas in `src/web/api/schemas/space.py`:
+   - `SpaceCreate` - Input: name, description, owner_email, search_criteria
+   - `SpaceResponse` - Output: id, name, slug, description, owner_email, search_criteria, is_active, created_at, shareable_url
+   - `SpaceStats` - Output: contributor_count, valid_contributors, total_results, unique_results
+
+3. Implement endpoints in spaces router:
+   - `POST /api/v1/spaces` - Create a new space
+     - Returns SpaceResponse with shareable_url
+
+   - `GET /api/v1/spaces/{slug}` - Get space by slug
+     - Returns SpaceResponse (public info only)
+
+   - `GET /api/v1/spaces/{slug}/stats` - Get space statistics
+     - Returns SpaceStats
+
+   - `PUT /api/v1/spaces/{slug}` - Update space
+     - Requires owner verification (simple email check for MVP)
+     - Updates name, description, search_criteria, is_active
+
+   - `GET /api/v1/spaces/mine` - List spaces by owner
+     - Query param: owner_email
+     - Returns list of SpaceResponse
+
+4. Register router with main app
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests first in `tests/web/test_space_routes.py`
+7. Add ABOUTME comments
+
+Start with tests, then implement the endpoints.
 ```
 
 ---
 
-### Prompt 9: LinkedIn Search Functionality
+### Prompt 27: Contributor API Endpoints
 
 ```text
-Continue building the LinkedIn connection search CLI. We have the LinkedIn client wrapper.
+Continue building the web application. We have Space endpoints.
 
-Add search functionality to the LinkedIn client:
+Create Contributor API endpoints:
 
 Requirements:
-- Extend `LinkedInClient` in `src/linkedin_scraper/linkedin/client.py`:
-  - Add `search_people(self, filter: SearchFilter) -> list[dict[str, Any]]` method that:
-    - Converts `SearchFilter` to linkedin-api parameters
-    - Calls the underlying `search_people` method
-    - Returns raw result dictionaries
-- Create `src/linkedin_scraper/linkedin/mapper.py` with:
-  - `map_search_result_to_profile(result: dict[str, Any], search_query: str | None = None) -> ConnectionProfile`
-    - Extracts: urn_id, public_id, first_name, last_name, headline, location, profile_url
-    - Determines connection_degree from the result
-    - Sets search_query and found_at
-    - Handles missing fields gracefully
-- The `SearchFilter` already exists in `search/filters.py`
-- All code must pass mypy strict mode
-- Follow TDD: write tests first (extend `tests/test_linkedin_client.py` and create `tests/test_mapper.py`)
-- Tests should use fixture data that mimics linkedin-api response structure
-- Add ABOUTME comments to new files
+1. Create `src/web/api/routes/contributors.py`
 
-Start with tests, then implement the functionality.
+2. Create Pydantic schemas in `src/web/api/schemas/contributor.py`:
+   - `ContributorCreate` - Input: name, email (optional), li_at, jsessionid
+   - `ContributorUpdate` - Input: li_at, jsessionid (for refreshing cookies)
+   - `ContributorResponse` - Output: id, name, email, status (CookieStatus enum), validation_error, contributed_at, updated_at, last_validated_at, last_used_at
+   - `ContributorList` - Output: list of contributors with counts (total, valid, expired, invalid)
+
+3. Implement endpoints:
+   - `POST /api/v1/spaces/{slug}/contributors` - Add contributor to space
+     - Accepts ContributorCreate
+     - Validates cookies before accepting (optional, query param)
+     - Returns ContributorResponse
+
+   - `GET /api/v1/spaces/{slug}/contributors` - List contributors
+     - Returns ContributorList
+     - Query param: include_revoked (default false)
+     - Query param: status_filter (optional, filter by CookieStatus)
+
+   - `PUT /api/v1/spaces/{slug}/contributors/{id}` - Update/refresh contributor's cookies
+     - Accepts ContributorUpdate with new li_at and jsessionid
+     - Validates new cookies
+     - Returns updated ContributorResponse
+     - This is how contributors refresh expired cookies
+
+   - `POST /api/v1/spaces/{slug}/contributors/{id}/validate` - Validate contributor's cookies
+     - Returns updated ContributorResponse with current status
+
+   - `DELETE /api/v1/spaces/{slug}/contributors/{id}` - Revoke contributor access
+     - Sets revoked_at timestamp
+     - Returns 204 No Content
+
+   - `GET /api/v1/spaces/{slug}/contributors/stale` - Get contributors needing refresh
+     - Query param: stale_days (default 7)
+     - Returns ContributorList of contributors with expired/stale cookies
+
+4. Register router with main app
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests first in `tests/web/test_contributor_routes.py`
+7. Add ABOUTME comments
+
+Start with tests, then implement the endpoints.
 ```
 
 ---
 
-### Prompt 10: Company ID Resolution
+### Prompt 28: Search API Endpoints
 
 ```text
-Continue building the LinkedIn connection search CLI. We have search functionality.
+Continue building the web application. We have Contributor endpoints.
 
-Add company ID resolution to the LinkedIn client:
+Create Search API endpoints:
 
 Requirements:
-- Extend `LinkedInClient` in `src/linkedin_scraper/linkedin/client.py`:
-  - Add `search_companies(self, name: str, limit: int = 5) -> list[dict[str, Any]]` method
-  - Add `resolve_company_id(self, name: str) -> str | None` method that:
-    - Searches for companies by name
-    - Returns the ID of the best match (first result)
-    - Returns None if no match found
-- Update `src/linkedin_scraper/linkedin/mapper.py`:
-  - Add `map_company_result(result: dict[str, Any]) -> dict[str, Any]` that extracts:
-    - company_id
-    - name
-    - industry
-    - employee_count (if available)
-- All code must pass mypy strict mode
-- Follow TDD: write tests first (extend `tests/test_linkedin_client.py`)
-- Tests should mock company search responses
-- Add ABOUTME comments to new/modified files
+1. Create `src/web/api/routes/search.py`
 
-Start with tests, then implement the functionality.
+2. Create Pydantic schemas in `src/web/api/schemas/search.py`:
+   - `SearchCriteria` - Input: keywords, company, location, degrees (list[int])
+   - `SearchResultResponse` - Output: id, name, headline, company, location, profile_url, connection_degree, mutual_connection, contributor_name
+   - `SearchResultList` - Output: results list, total_count, unique_count
+   - `ExportResponse` - Output: csv_url or csv_content
+
+3. Implement endpoints:
+   - `POST /api/v1/spaces/{slug}/search` - Execute search across all valid contributors
+     - Optional body: SearchCriteria (uses space defaults if not provided)
+     - Returns SearchResultList
+     - Background job consideration: for MVP, run synchronously but design for future async
+
+   - `GET /api/v1/spaces/{slug}/results` - Get cached search results
+     - Query params: limit, offset, deduplicate (bool)
+     - Returns SearchResultList
+
+   - `GET /api/v1/spaces/{slug}/export` - Export results as CSV
+     - Query param: format (csv only for now)
+     - Returns CSV content or download URL
+
+4. Register router with main app
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests first in `tests/web/test_search_routes.py`
+7. Add ABOUTME comments
+
+Start with tests, then implement the endpoints.
 ```
 
 ---
 
-### Prompt 11: Login Command Implementation
+### Prompt 29: Frontend Project Setup
 
 ```text
-Continue building the LinkedIn connection search CLI. We have LinkedIn client and company resolution.
+Continue building the web application. The backend API is complete.
 
-Implement the `login` command in the CLI:
+Set up the Next.js frontend project:
 
 Requirements:
-- Update `src/linkedin_scraper/cli.py` to implement the `login` command:
-  - Prompt user to paste their `li_at` cookie (use Rich prompt with password masking)
-  - Validate cookie format using CookieManager
-  - Validate cookie by testing with LinkedInClient
-  - Store cookie in keyring using CookieManager
-  - Options:
-    - `--account` / `-a`: Account name (default: "default")
-    - `--validate/--no-validate`: Whether to validate cookie online (default: validate)
-  - Display success/failure with Rich formatting
-  - If validation fails, show helpful error message about how to get the cookie
-- Add a helper function `get_cookie_instructions() -> str` that returns instructions for extracting li_at cookie from browser
-- All code must pass mypy strict mode
-- Follow TDD: update tests in `tests/test_cli.py`
-- Tests should mock CookieManager and LinkedInClient
-- Tests should cover: successful login, invalid cookie format, failed validation, account naming
+1. Create frontend directory structure:
+   - `frontend/` - Next.js application root
+   - Initialize with: `pnpm create next-app frontend --typescript --tailwind --eslint --app`
 
-Start with tests, then implement the command.
+2. Configure project:
+   - Add shadcn/ui: `pnpm dlx shadcn@latest init`
+   - Add dependencies: tanstack-query, zustand, framer-motion
+   - Configure Biome for formatting/linting
+   - Set up path aliases in tsconfig.json (@/ for src/)
+
+3. Create base configuration files:
+   - `frontend/src/lib/api.ts` - API client configuration
+     - Base URL from environment variable
+     - Fetch wrapper with error handling
+
+   - `frontend/src/lib/query-client.ts` - TanStack Query client setup
+
+   - `frontend/src/store/index.ts` - Zustand store skeleton
+
+4. Create basic layout:
+   - `frontend/src/app/layout.tsx` - Root layout with providers
+   - `frontend/src/app/page.tsx` - Landing page placeholder
+   - `frontend/src/components/providers.tsx` - QueryClientProvider wrapper
+
+5. Add environment file template:
+   - `frontend/.env.example` with NEXT_PUBLIC_API_URL
+
+6. Follow TDD: write tests in `frontend/__tests__/`
+7. Use Jest for unit tests, set up Playwright for E2E (config only for now)
+
+Start by setting up the project, then implement the base files.
 ```
 
 ---
 
-### Prompt 12: Search Command Implementation
+### Prompt 30: API Client Generation
 
 ```text
-Continue building the LinkedIn connection search CLI. We have the login command.
+Continue building the frontend. We have the project setup.
 
-Implement the `search` command in the CLI:
+Generate typed API client from OpenAPI schema:
 
 Requirements:
-- Update `src/linkedin_scraper/cli.py` to implement the `search` command:
-  - Options:
-    - `--keywords` / `-k`: Search keywords (required)
-    - `--company` / `-c`: Company name to filter by (optional, will resolve to ID)
-    - `--location` / `-l`: Location filter (optional)
-    - `--degree` / `-d`: Connection degrees, comma-separated (default: "1,2")
-    - `--limit`: Max results (default: 100)
-    - `--account` / `-a`: Account to use (default: "default")
-  - Flow:
-    1. Load cookie from keyring
-    2. Check rate limits (display warning if low)
-    3. If company name provided, resolve to company ID
-    4. Perform search via LinkedInClient
-    5. Map results to ConnectionProfile models
-    6. Save results to database
-    7. Display results in Rich table
-    8. Show rate limit status after search
-- Create `src/linkedin_scraper/search/orchestrator.py` with `SearchOrchestrator` class:
-  - Coordinates between RateLimiter, LinkedInClient, and DatabaseService
-  - Method: `execute_search(self, filter: SearchFilter, account: str) -> list[ConnectionProfile]`
-- All code must pass mypy strict mode
-- Follow TDD: update tests in `tests/test_cli.py` and create `tests/test_orchestrator.py`
-- Tests should mock all external dependencies
+1. Add openapi-ts to backend:
+   - Configure FastAPI to export OpenAPI schema
+   - Add script to pyproject.toml: `generate-openapi`
 
-Start with tests, then implement the command.
+2. Set up openapi-ts in frontend:
+   - Install: `pnpm add -D @hey-api/openapi-ts`
+   - Create `frontend/openapi-ts.config.ts`
+   - Add script to package.json: `generate-client`
+
+3. Create `frontend/src/lib/api/` directory:
+   - Generated client files will go here
+   - Create manual types file for any custom types
+
+4. Create TanStack Query hooks wrapper:
+   - `frontend/src/hooks/api/useSpaces.ts`
+     - `useCreateSpace()`
+     - `useSpace(slug)`
+     - `useSpaceStats(slug)`
+     - `useMySpaces(email)`
+
+   - `frontend/src/hooks/api/useContributors.ts`
+     - `useAddContributor(slug)`
+     - `useContributors(slug)`
+     - `useValidateContributor(slug, id)`
+     - `useRevokeContributor(slug, id)`
+
+   - `frontend/src/hooks/api/useSearch.ts`
+     - `useExecuteSearch(slug)`
+     - `useSearchResults(slug)`
+     - `useExportResults(slug)`
+
+5. Follow TDD: write tests for hooks
+6. Mock API responses in tests
+
+Start by setting up openapi-ts config, then create the hooks.
 ```
 
 ---
 
-### Prompt 13: Status Command Implementation
+### Prompt 31: UI Component Library Setup
 
 ```text
-Continue building the LinkedIn connection search CLI. We have login and search commands.
+Continue building the frontend. We have the API client.
 
-Implement the `status` command in the CLI:
+Set up the shared UI component library:
 
 Requirements:
-- Update `src/linkedin_scraper/cli.py` to implement the `status` command:
-  - Display:
-    - Rate limit status (using RateLimitDisplay)
-    - Stored accounts list with validation status
-    - Database statistics (total stored connections, unique companies, etc.)
-  - Options:
-    - `--account` / `-a`: Show details for specific account (validates cookie)
-- Create `src/linkedin_scraper/database/stats.py` with `get_database_stats()` function:
-  - Returns dict with: total_connections, unique_companies, unique_locations, recent_searches_count
-- All code must pass mypy strict mode
-- Follow TDD: update tests in `tests/test_cli.py` and create `tests/test_database_stats.py`
-- Tests should verify correct display formatting
+1. Install shadcn/ui components:
+   - button, input, textarea, label
+   - card, dialog, dropdown-menu
+   - table, tabs
+   - toast, alert
+   - form (with react-hook-form integration)
 
-Start with tests, then implement the command.
+2. Create custom components in `frontend/src/components/ui/`:
+   - `loading-spinner.tsx` - Animated loading indicator
+   - `page-header.tsx` - Consistent page headers with title, description, actions
+   - `empty-state.tsx` - Empty state with icon, message, and action
+   - `error-boundary.tsx` - Error boundary with fallback UI
+
+3. Create layout components in `frontend/src/components/layout/`:
+   - `navbar.tsx` - Top navigation bar
+   - `footer.tsx` - Simple footer
+   - `container.tsx` - Max-width container with padding
+
+4. Set up Tailwind theme customization:
+   - Brand colors
+   - Custom spacing if needed
+   - Dark mode support (basic)
+
+5. Follow TDD: write component tests
+6. Use Storybook or simple test renders to verify components
+
+Start with shadcn installation, then implement custom components.
 ```
 
 ---
 
-### Prompt 14: Export Command Implementation
+### Prompt 32: Landing Page
 
 ```text
-Continue building the LinkedIn connection search CLI. We have login, search, and status commands.
+Continue building the frontend. We have the component library.
 
-Implement the `export` command in the CLI:
+Create the landing page:
 
 Requirements:
-- Update `src/linkedin_scraper/cli.py` to implement the `export` command:
-  - Options:
-    - `--output` / `-o`: Output file path (default: `linkedin_export_{timestamp}.csv`)
-    - `--query` / `-q`: Filter by search query string (optional)
-    - `--all`: Export all stored results (default behavior if no filters)
-    - `--limit`: Max records to export (default: no limit)
-- Create `src/linkedin_scraper/export/__init__.py` and `src/linkedin_scraper/export/csv_exporter.py`
-- Implement `CSVExporter` class:
-  - Method: `export(self, profiles: list[ConnectionProfile], output_path: Path) -> Path`
-  - Columns: name, first_name, last_name, headline, company, title, location, profile_url, degree, search_query, found_at
-  - Include metadata row at top with export timestamp and query info
-  - Use Python's csv module with proper escaping
-- All code must pass mypy strict mode
-- Follow TDD: create `tests/test_csv_exporter.py` and update `tests/test_cli.py`
-- Tests should verify CSV output format and content
+1. Create `frontend/src/app/page.tsx`:
+   - Hero section explaining the tool
+   - "Create a Space" CTA button
+   - How it works section (3 steps)
+   - Simple footer
 
-Start with tests, then implement the export.
+2. Implement responsive design:
+   - Mobile-first approach
+   - Proper spacing and typography
+
+3. Add Framer Motion animations:
+   - Fade-in on scroll for sections
+   - Button hover effects
+
+4. Create reusable section components:
+   - `frontend/src/components/landing/hero.tsx`
+   - `frontend/src/components/landing/how-it-works.tsx`
+   - `frontend/src/components/landing/cta-section.tsx`
+
+5. Follow TDD: write tests for page rendering
+6. Test responsive breakpoints
+
+Start with the page structure, then add animations.
 ```
 
 ---
 
-### Prompt 15: Rich Output Formatting
+### Prompt 33: Space Creation Flow
 
 ```text
-Continue building the LinkedIn connection search CLI. We have all commands implemented.
+Continue building the frontend. We have the landing page.
 
-Enhance terminal output with Rich formatting:
+Create the space creation flow:
 
 Requirements:
-- Create `src/linkedin_scraper/display/__init__.py` and `src/linkedin_scraper/display/tables.py`
-- Implement `ConnectionTable` class:
-  - Method: `render(self, profiles: list[ConnectionProfile], title: str | None = None) -> Table`
-  - Columns: #, Name, Headline, Company, Location, Degree
-  - Truncate long headlines/company names with ellipsis
-  - Color-code connection degrees (1st=green, 2nd=yellow, 3rd=red)
-  - Show row numbers
-- Create `src/linkedin_scraper/display/status.py`:
-  - Function: `display_search_summary(count: int, query: str, duration_seconds: float) -> Panel`
-  - Function: `display_rate_limit_warning(remaining: int) -> Panel | None` - returns warning if < 5 remaining
-- Update CLI commands to use these display helpers
-- All code must pass mypy strict mode
-- Follow TDD: create `tests/test_display.py`
-- Tests should verify Rich renderables are created correctly
+1. Create `frontend/src/app/create/page.tsx`:
+   - Multi-step form using shadcn Form
+   - Step 1: Space basics (name, description)
+   - Step 2: Search criteria (keywords, company, location, degrees)
+   - Step 3: Your info (email for ownership)
+   - Review and submit
 
-Start with tests, then implement the display helpers.
+2. Create form components:
+   - `frontend/src/components/spaces/space-form.tsx` - Main form container
+   - `frontend/src/components/spaces/search-criteria-form.tsx` - Search params
+   - `frontend/src/components/spaces/step-indicator.tsx` - Progress indicator
+
+3. Implement form validation with Zod schemas:
+   - Space name required, min 3 chars
+   - Email required, valid format
+   - Keywords required for search criteria
+
+4. On successful creation:
+   - Show success dialog with shareable link
+   - Copy to clipboard button
+   - Navigate to space admin page
+
+5. Use Zustand for multi-step form state
+
+6. Follow TDD: write tests for form validation and submission
+7. Mock API calls in tests
+
+Start with the page structure, then implement form steps.
 ```
 
 ---
 
-### Prompt 16: Error Handling and User Messages
+### Prompt 34: Space Admin Dashboard
 
 ```text
-Continue building the LinkedIn connection search CLI. We have Rich formatting.
+Continue building the frontend. We have space creation.
 
-Add comprehensive error handling and user-friendly messages:
+Create the space admin dashboard:
 
 Requirements:
-- Create `src/linkedin_scraper/errors.py` with a base `LinkedInScraperError` exception
-- Create `src/linkedin_scraper/display/errors.py` with error display helpers:
-  - `display_error(error: Exception) -> Panel` - formats errors with Rich
-  - `display_cookie_help() -> Panel` - shows how to get li_at cookie
-  - `display_rate_limit_exceeded(reset_time: datetime) -> Panel` - shows when limit resets
-- Update CLI to catch and display errors gracefully:
-  - LinkedInAuthError -> show cookie help
-  - RateLimitExceeded -> show when to try again
-  - Network errors -> show retry suggestion
-  - Generic errors -> show error details with traceback option (`--debug` flag)
-- Add `--debug` flag to main CLI for verbose error output
-- All code must pass mypy strict mode
-- Follow TDD: update `tests/test_cli.py` to test error scenarios
-- Tests should verify correct error messages are displayed
+1. Create `frontend/src/app/spaces/[slug]/admin/page.tsx`:
+   - Space info card (name, description, shareable link)
+   - Contributors list with status indicators
+   - Search results summary
+   - Quick actions (run search, export, settings)
 
-Start with tests, then implement error handling.
+2. Create dashboard components:
+   - `frontend/src/components/spaces/space-info-card.tsx`
+   - `frontend/src/components/spaces/contributor-list.tsx` - Table with:
+     - Name, email
+     - Status badge with color coding:
+       - Green "Valid" - cookies working
+       - Yellow "Stale" - not validated recently
+       - Red "Expired" - session expired, needs refresh
+       - Gray "Unknown" - not yet validated
+       - Orange "Rate Limited" - temporarily unavailable
+     - Last validated timestamp
+     - Actions: validate, request refresh, revoke
+   - `frontend/src/components/spaces/stats-card.tsx` - Key metrics including:
+     - Total contributors
+     - Valid contributors (can be used for search)
+     - Contributors needing attention (expired/stale)
+   - `frontend/src/components/spaces/cookie-health-banner.tsx`
+     - Shows warning if many contributors have expired cookies
+     - "X of Y contributors need to refresh their cookies"
+     - Button to send refresh reminders (if emails available)
+
+3. Implement real-time updates:
+   - Use TanStack Query's refetch interval for stats
+   - Show loading states during actions
+
+4. Add action handlers:
+   - Copy shareable link to clipboard
+   - Validate contributor (with loading state)
+   - Copy individual refresh link for contributor
+   - Revoke contributor (with confirmation dialog)
+
+5. Simple authentication check:
+   - Query param or localStorage for owner_email
+   - Show warning if not owner
+
+6. Follow TDD: write tests for dashboard interactions
+
+Start with page structure, then implement components.
 ```
 
 ---
 
-### Prompt 17: Final Integration and Polish
+### Prompt 35: Shareable Link View
 
 ```text
-Continue building the LinkedIn connection search CLI. We have error handling in place.
+Continue building the frontend. We have the admin dashboard.
 
-Final integration, testing, and polish:
+Create the shareable link view (public space page):
 
 Requirements:
-1. Update `src/linkedin_scraper/__init__.py`:
-   - Export version from pyproject.toml
-   - Add `__version__` attribute
+1. Create `frontend/src/app/s/[slug]/page.tsx`:
+   - Public view of space
+   - Shows space name, description, search target description
+   - Large CTA: "Contribute Your Network"
+   - Info about what contributing means
 
-2. Add `--version` flag to CLI
+2. Show space status:
+   - Active: Show contribution form link
+   - Inactive: Show "This space is no longer accepting contributions"
 
-3. Create `tests/test_integration.py` with end-to-end tests:
-   - Test full login -> search -> export flow (with mocked LinkedIn API)
-   - Test rate limit enforcement across multiple searches
-   - Test database persistence across command invocations
+3. Create trust-building elements:
+   - How cookies are used (encrypted, not shared)
+   - What happens when you contribute
+   - Privacy notice
 
-4. Update all modules to ensure consistent:
-   - ABOUTME comments at top of each file
-   - Type annotations passing mypy strict
-   - Ruff linting compliance
+4. Link to contribution page: `/s/[slug]/contribute`
 
-5. Create a CLI help improvement:
-   - Add examples to each command's help text using Typer's rich help
-   - Ensure `--help` output matches PRD examples
+5. Responsive design:
+   - Works well on mobile (link sharing via messaging)
+   - Clear, simple layout
 
-6. Run full test suite and fix any issues:
-   - `uv run pytest`
-   - `uv run mypy src/`
-   - `uv run ruff check src/`
+6. Follow TDD: write tests for page rendering and status handling
 
-All code must pass mypy strict mode, ruff checks, and have >80% test coverage.
+Start with page layout, then add trust elements.
+```
 
-Start with integration tests, then implement remaining polish items.
+---
+
+### Prompt 36: Cookie Contribution Page
+
+```text
+Continue building the frontend. We have the shareable link view.
+
+Create the cookie contribution flow:
+
+Requirements:
+1. Create `frontend/src/app/s/[slug]/contribute/page.tsx`:
+   - Check space is active, show error if not
+   - Contributor info form (name, email optional)
+   - Cookie input section
+
+2. Create `frontend/src/app/s/[slug]/refresh/[contributor_id]/page.tsx`:
+   - Cookie refresh page for existing contributors
+   - Shows contributor name and current status
+   - Explains why refresh is needed (e.g., "Your session has expired")
+   - Same cookie input form, but updates existing contributor
+   - Success message confirms cookies were updated
+
+3. Create cookie instruction components:
+   - `frontend/src/components/contribute/cookie-instructions.tsx`
+     - Step-by-step guide with screenshots/diagrams
+     - Browser-specific tabs (Chrome, Firefox, Safari, Edge)
+     - Expandable detailed steps
+   - `frontend/src/components/contribute/cookie-input-form.tsx`
+     - Input for li_at cookie
+     - Input for JSESSIONID cookie
+     - Clear labels explaining what each cookie is
+     - Reusable for both new contribution and refresh flows
+
+4. Add embedded video placeholder:
+   - Section for Loom video embed
+   - Fallback text instructions if video fails to load
+
+5. Form submission:
+   - Optional validation before submit
+   - Success state with thank you message
+   - For refresh: "Your cookies have been updated. Thank you!"
+   - Error handling with helpful messages
+
+6. Cookie status indicators:
+   - If refreshing, show current status (expired, invalid, etc.)
+   - Explain what the error means in user-friendly terms
+
+7. Follow TDD: write tests for contribution flow
+
+Start with the page, then implement instruction components.
+```
+
+---
+
+### Prompt 37: Background Cookie Validation ⭐ PRIORITY
+
+```text
+Continue building the web application. We have the cookie management UI.
+
+Add background task for cookie validation - this is critical for detecting expired cookies:
+
+Requirements:
+1. Create `src/web/tasks/__init__.py` and `src/web/tasks/validation.py`
+
+2. Implement validation task:
+   - `validate_space_cookies(space_id: UUID) -> ValidationReport`
+     - Validates all contributor cookies
+     - Marks invalid cookies in database with appropriate CookieStatus
+     - Returns summary: total, valid, expired, invalid, rate_limited
+
+   - `validate_all_spaces() -> dict[UUID, ValidationReport]`
+     - Validates cookies across all active spaces
+     - Adds delays between spaces to avoid LinkedIn detection
+     - For use in scheduled jobs
+
+3. Add endpoint to trigger validation:
+   - `POST /api/v1/spaces/{slug}/validate-all`
+   - Returns immediately with task status
+   - For MVP: run synchronously but return quickly
+
+4. Create `src/web/tasks/notifications.py`:
+   - `generate_refresh_links(space_id: UUID) -> list[tuple[Contributor, str]]`
+     - Returns list of (contributor, refresh_url) for expired contributors
+
+   - `send_refresh_reminder(contributor: Contributor, refresh_url: str) -> bool`
+     - Sends email to contributor (if email provided) with refresh link
+     - For MVP: just log the email, actual sending is future work
+     - Returns whether notification was "sent" (logged)
+
+5. Add periodic validation concept:
+   - Create config for validation interval (default: daily)
+   - Create config for stale threshold (default: 7 days)
+   - Document how to set up cron job externally
+   - Example cron: `0 6 * * * curl -X POST http://localhost:8000/api/v1/admin/validate-all`
+
+6. Add admin endpoint:
+   - `POST /api/v1/admin/validate-all` - Validates all spaces (for cron job)
+   - Protected by admin API key from settings
+
+7. All code must pass mypy strict mode
+8. Follow TDD: write tests with mocked LinkedIn client
+9. Add ABOUTME comments
+
+Start with tests, then implement task.
+```
+
+---
+
+### Prompt 38: Search Interface
+
+```text
+Continue building the frontend. We have cookie management and validation in place.
+
+Create the search interface for space admins:
+
+Requirements:
+1. Create `frontend/src/app/spaces/[slug]/search/page.tsx`:
+   - Search criteria form (pre-filled with space defaults)
+   - Run search button
+   - Results display area
+
+2. Create search components:
+   - `frontend/src/components/search/search-form.tsx`
+     - Keywords input
+     - Company name input
+     - Location input
+     - Connection degree checkboxes (1st, 2nd, 3rd)
+   - `frontend/src/components/search/search-status.tsx`
+     - Shows progress: "Searching X of Y contributor networks..."
+     - Results count as they come in
+
+3. Results display:
+   - Loading state during search
+   - Results table with columns: Name, Headline, Company, Location, Degree, Via (contributor)
+   - Deduplication toggle
+   - Sort options
+
+4. Handle long-running searches:
+   - For MVP: show loading spinner
+   - Timeout handling with retry option
+
+5. Follow TDD: write tests for search flow
+
+Start with the page, then implement search components.
+```
+
+---
+
+### Prompt 39: Results Table & Export
+
+```text
+Continue building the frontend. We have the search interface.
+
+Create the results table and export functionality:
+
+Requirements:
+1. Create `frontend/src/components/search/results-table.tsx`:
+   - Sortable columns: Name, Headline, Company, Location, Degree
+   - Connection path column showing mutual connection
+   - Link to LinkedIn profile (opens in new tab)
+   - Pagination for large result sets
+
+2. Create export components:
+   - `frontend/src/components/search/export-button.tsx`
+     - Dropdown with export options
+     - CSV export (download file)
+   - `frontend/src/components/search/export-preview.tsx`
+     - Preview of what will be exported
+     - Row count, columns included
+
+3. Implement table features:
+   - Client-side sorting
+   - Client-side filtering (search within results)
+   - Row selection for partial export
+
+4. Export functionality:
+   - Call export API endpoint
+   - Trigger file download
+   - Show toast on success/error
+
+5. Follow TDD: write tests for table and export
+
+Start with the table, then add export functionality.
+```
+
+---
+
+### Prompt 40: Settings & Space Management
+
+```text
+Continue building the frontend. We have results and export.
+
+Create space settings and management pages:
+
+Requirements:
+1. Create `frontend/src/app/spaces/[slug]/settings/page.tsx`:
+   - Edit space name and description
+   - Update default search criteria
+   - Deactivate space (with confirmation)
+   - Delete space (with double confirmation)
+
+2. Create settings components:
+   - `frontend/src/components/spaces/settings-form.tsx`
+   - `frontend/src/components/spaces/danger-zone.tsx`
+     - Deactivate button
+     - Delete button with warning
+
+3. Implement form submission:
+   - Optimistic updates with rollback on error
+   - Success/error toasts
+
+4. Add confirmation dialogs:
+   - Deactivate: "Contributors won't be able to add cookies"
+   - Delete: "This cannot be undone. Type space name to confirm"
+
+5. Follow TDD: write tests for settings operations
+
+Start with the settings form, then add danger zone.
+```
+
+---
+
+### Prompt 41: Error Handling & Loading States
+
+```text
+Continue building the frontend. We have all main features.
+
+Implement comprehensive error handling and loading states:
+
+Requirements:
+1. Create error components:
+   - `frontend/src/components/error/error-page.tsx` - Full page error
+   - `frontend/src/components/error/error-inline.tsx` - Inline error message
+   - `frontend/src/components/error/not-found.tsx` - 404 page for spaces
+
+2. Create loading components:
+   - `frontend/src/components/loading/page-skeleton.tsx` - Full page skeleton
+   - `frontend/src/components/loading/table-skeleton.tsx` - Table loading state
+   - `frontend/src/components/loading/card-skeleton.tsx` - Card loading state
+
+3. Implement error boundary:
+   - Wrap main content in error boundary
+   - Log errors to console (prepare for future logging service)
+   - Show user-friendly error message
+
+4. Create toast notifications system:
+   - Success: Green toast for completed actions
+   - Error: Red toast with retry action
+   - Info: Blue toast for informational messages
+
+5. Update all pages to use proper loading/error states
+
+6. Follow TDD: write tests for error scenarios
+
+Start with error components, then update existing pages.
+```
+
+---
+
+### Prompt 42: Backend - Rate Limiting for Web API
+
+```text
+Continue building the web application. Frontend is feature-complete.
+
+Add rate limiting to the web API:
+
+Requirements:
+1. Create `src/web/api/middleware/rate_limit.py`:
+   - IP-based rate limiting for public endpoints
+   - Configurable limits per endpoint type
+   - Return 429 with Retry-After header
+
+2. Configure limits:
+   - Space creation: 10 per hour per IP
+   - Contribution: 5 per hour per IP
+   - Search execution: 3 per hour per space
+   - Read endpoints: 100 per minute per IP
+
+3. Store rate limit state:
+   - Use database for persistence (simple table)
+   - Or use Redis if available (check settings)
+
+4. Add middleware to FastAPI app
+
+5. All code must pass mypy strict mode
+6. Follow TDD: write tests for rate limit scenarios
+7. Add ABOUTME comments
+
+Start with tests, then implement middleware.
+```
+
+---
+
+### Prompt 43: Integration Testing - Backend
+
+```text
+Continue building the web application. We have background tasks.
+
+Create comprehensive backend integration tests:
+
+Requirements:
+1. Create `tests/web/test_integration.py`
+
+2. Test full flows:
+   - Create space → Add contributors → Execute search → Export results
+   - Invalid cookie handling during search
+   - Rate limit enforcement
+   - Space deactivation preventing new contributions
+
+3. Test edge cases:
+   - Duplicate contributor emails
+   - Search with no valid contributors
+   - Export with no results
+   - Slug collision handling
+
+4. Set up test fixtures:
+   - Test database with sample data
+   - Mocked LinkedIn client responses
+   - Sample search results
+
+5. Ensure >80% code coverage for web package
+
+6. All tests must pass
+7. Document any manual testing needed
+
+Start with happy path tests, then add edge cases.
+```
+
+---
+
+### Prompt 44: Integration Testing - Frontend
+
+```text
+Continue building the web application. We have backend integration tests.
+
+Create comprehensive frontend integration tests:
+
+Requirements:
+1. Set up Playwright for E2E tests:
+   - `frontend/e2e/` directory
+   - Configure playwright.config.ts
+   - Mock API server for tests
+
+2. Test user flows:
+   - Landing → Create space → Get shareable link
+   - Open shareable link → Contribute cookies
+   - Admin dashboard → View contributors → Run search
+   - Search results → Export CSV
+
+3. Test responsive design:
+   - Mobile viewport tests
+   - Tablet viewport tests
+
+4. Test error scenarios:
+   - Invalid space slug (404)
+   - API errors (show error message)
+   - Form validation errors
+
+5. Create test utilities:
+   - API mock helpers
+   - Page object models for common pages
+
+6. All tests must pass
+
+Start with happy path E2E tests, then add error scenarios.
+```
+
+---
+
+### Prompt 45: Documentation
+
+```text
+Continue building the web application. We have all tests.
+
+Create user and developer documentation:
+
+Requirements:
+1. Update README.md:
+   - Add web application section
+   - Development setup instructions
+   - Environment variables reference
+   - API documentation link
+
+2. Create `docs/` directory:
+   - `docs/api.md` - API reference (or link to Swagger)
+   - `docs/deployment.md` - Deployment guide
+   - `docs/cookie-extraction.md` - User guide for getting LinkedIn cookies
+
+3. Add inline documentation:
+   - Docstrings for all public API endpoints
+   - TypeScript JSDoc comments for components
+
+4. Create `.env.example` files:
+   - Backend: database URL, encryption key, CORS
+   - Frontend: API URL
+
+5. Do NOT create excessive documentation - keep it minimal and useful
+
+Start with README updates, then add essential docs only.
+```
+
+---
+
+### Prompt 46: Deployment Configuration
+
+```text
+Continue building the web application. We have documentation.
+
+Create deployment configuration:
+
+Requirements:
+1. Create Docker configuration:
+   - `Dockerfile` for backend
+   - `frontend/Dockerfile` for frontend
+   - `docker-compose.yml` for local development
+   - `docker-compose.prod.yml` for production setup
+
+2. Backend Dockerfile:
+   - Use Python 3.12 slim image
+   - Install uv for dependency management
+   - Run with uvicorn
+
+3. Frontend Dockerfile:
+   - Multi-stage build
+   - Build with pnpm
+   - Serve with nginx or Next.js standalone
+
+4. Docker Compose:
+   - Backend service
+   - Frontend service
+   - PostgreSQL service
+   - Network configuration
+
+5. Environment configuration:
+   - Production environment variables template
+   - Secret management notes
+
+6. Do NOT include CI/CD pipelines - just Docker setup
+
+Start with backend Dockerfile, then frontend, then compose.
+```
+
+---
+
+### Prompt 47: Final Integration & Polish
+
+```text
+Final step: integrate everything and polish.
+
+Requirements:
+1. Verify all components work together:
+   - Run full Docker Compose stack
+   - Test complete user flow end-to-end
+   - Fix any integration issues
+
+2. Code cleanup:
+   - Remove any TODO comments that are complete
+   - Ensure consistent error messages
+   - Verify all ABOUTME comments are present
+
+3. Run all quality checks:
+   - `uv run pytest` - All tests pass
+   - `uv run mypy src/` - No type errors
+   - `uv run ruff check src/` - No lint errors
+   - `pnpm test` - Frontend tests pass
+   - `pnpm run lint` - Frontend lint passes
+
+4. Final testing:
+   - Create a test space
+   - Add test contributor
+   - Execute search
+   - Export results
+
+5. Update version in pyproject.toml to 2.0.0
+
+6. Create git tag for release
+
+Document any known limitations or future improvements in README.
 ```
 
 ---
@@ -578,39 +1352,73 @@ Start with integration tests, then implement remaining polish items.
 ## Dependency Graph
 
 ```
-Prompt 1 (Database) ─────────────────────────────────────────────────────┐
-    ↓                                                                    │
-Prompt 2 (Cookie Manager) ───────────────────────────────────────────┐   │
-    ↓                                                                │   │
-Prompt 3 (Config) ───────────────────────────────────────────────┐   │   │
-    ↓                                                            │   │   │
-Prompt 4 (CLI Skeleton) ←────────────────────────────────────────┴───┴───┘
+Phase 2.1: Database Models
+Prompt 18 (Space) ─────────────────────────┐
+    ↓                                      │
+Prompt 19 (Contributor + CookieStatus) ────┤  ⭐ Cookie expiration fields
+    ↓                                      │
+Prompt 20 (SearchResult) ──────────────────┘
     ↓
-Prompt 5 (Rate Limiter Core) ←── Prompt 1
+Phase 2.2: Services
+Prompt 21 (Database Service) ←── Prompts 18-20
     ↓
-Prompt 6 (Rate Limiter Delay)
+Prompt 22 (Space Service) ←── Prompt 21
     ↓
-Prompt 7 (Rate Limiter Display)
+Prompt 23 (Cookie Service) ←── Prompts 21-22  ⭐ Validation & refresh logic
     ↓
-Prompt 8 (LinkedIn Client) ←── Prompt 2
+Prompt 24 (Search Service) ←── Prompt 23
     ↓
-Prompt 9 (LinkedIn Search)
+Phase 2.3: API
+Prompt 25 (App Setup) ←── Prompts 21-24
     ↓
-Prompt 10 (Company Resolution)
+Prompt 26 (Space Routes) ←── Prompt 25
     ↓
-Prompt 11 (Login Command) ←── Prompts 4, 8
+Prompt 27 (Contributor Routes) ←── Prompt 26  ⭐ Refresh endpoints
     ↓
-Prompt 12 (Search Command) ←── Prompts 5-7, 9-10
+Prompt 28 (Search Routes) ←── Prompt 27
     ↓
-Prompt 13 (Status Command) ←── Prompts 7, 12
+Phase 2.4: Frontend Foundation
+Prompt 29 (Project Setup) ─── runs parallel to API ───┐
+    ↓                                                 │
+Prompt 30 (API Client) ←── Prompts 28, 29             │
+    ↓                                                 │
+Prompt 31 (UI Components) ←── Prompt 30               │
+    ↓                                                 │
+Prompt 32 (Landing Page) ←── Prompt 31                │
+    ↓                                                 │
+Phase 2.5: Cookie Management UI ⭐ PRIORITY           │
+Prompt 33 (Create Space) ←── Prompt 32 ←──────────────┘
     ↓
-Prompt 14 (Export Command)
+Prompt 34 (Admin Dashboard) ←── Prompt 33     ⭐ Cookie health indicators
     ↓
-Prompt 15 (Rich Output)
+Prompt 35 (Public Space View) ←── Prompt 34
     ↓
-Prompt 16 (Error Handling)
+Prompt 36 (Contribution/Refresh Page) ←── 35  ⭐ Cookie refresh flow
     ↓
-Prompt 17 (Final Integration)
+Phase 2.6: Background Cookie Validation ⭐ PRIORITY
+Prompt 37 (Validation Tasks) ←── Prompt 36    ⭐ Proactive expiration detection
+    ↓
+Phase 2.7: Search & Export UI
+Prompt 38 (Search Interface) ←── Prompt 37
+    ↓
+Prompt 39 (Results & Export) ←── Prompt 38
+    ↓
+Prompt 40 (Settings) ←── Prompt 39
+    ↓
+Prompt 41 (Error/Loading) ←── Prompt 40
+    ↓
+Phase 2.8: Polish & Integration
+Prompt 42 (Rate Limiting) ←── Prompt 41
+    ↓
+Prompt 43 (Backend Tests) ←── Prompt 42
+    ↓
+Prompt 44 (Frontend Tests) ←── Prompt 43
+    ↓
+Prompt 45 (Documentation) ←── Prompt 44
+    ↓
+Prompt 46 (Deployment) ←── Prompt 45
+    ↓
+Prompt 47 (Final Integration) ←── Prompt 46
 ```
 
 ## Quality Gates
@@ -619,12 +1427,41 @@ After each prompt, verify:
 1. All new tests pass: `uv run pytest tests/`
 2. Type checking passes: `uv run mypy src/`
 3. Linting passes: `uv run ruff check src/`
-4. Coverage remains >80%
+4. Frontend tests pass: `pnpm test` (when applicable)
+5. Frontend lint passes: `pnpm run lint` (when applicable)
 
 ## Notes
 
-- Each prompt is designed to be self-contained while building on previous work
-- All prompts emphasize TDD: tests are written before implementation
-- No mock modes or fake data - tests mock external dependencies (keyring, linkedin-api)
-- Database tests use temporary files, not in-memory, to match production behavior
-- The existing models in `models/` should be used as-is (no modifications needed)
+- Phase 1 (CLI tool) is complete and should not be modified
+- Web app reuses existing LinkedIn client and search logic
+- Cookie encryption is critical - never store plain cookies
+- Start with simple owner verification (email check), add proper auth later
+- Rate limiting protects against abuse
+- Background tasks are simple for MVP - enhance with job queue later
+
+## Cookie Expiration Strategy
+
+LinkedIn cookies can expire or be invalidated. The system handles this through:
+
+### Detection
+- **Proactive validation**: Daily background job validates all contributor cookies
+- **On-demand validation**: Validate before searches, mark failures immediately
+- **Status tracking**: `CookieStatus` enum tracks VALID, EXPIRED, INVALID, RATE_LIMITED, UNKNOWN
+
+### User Communication
+- **Dashboard health banner**: "X of Y contributors need to refresh their cookies"
+- **Status badges**: Color-coded indicators for each contributor
+- **Refresh links**: Unique URL for each contributor to update their cookies: `/s/{slug}/refresh/{contributor_id}`
+
+### Refresh Flow
+1. Space owner sees expired contributors in dashboard
+2. Owner copies refresh link or triggers email notification
+3. Contributor receives link, visits refresh page
+4. Contributor submits fresh cookies using same instructions
+5. System validates and updates contributor record
+
+### Minimizing Expiration
+- Aggressive rate limiting (lower than LinkedIn's actual limits)
+- Random delays between API calls (jitter)
+- Spread searches across time (don't hit all accounts simultaneously)
+- Use cookies sparingly - only for actual searches, not constant validation
