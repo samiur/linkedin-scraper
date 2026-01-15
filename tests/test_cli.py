@@ -413,12 +413,222 @@ class TestExportCommand:
 
 
 class TestStatusCommand:
-    """Tests for the status command stub."""
+    """Tests for the status command."""
 
-    def test_status_prints_not_implemented(self, runner: CliRunner, temp_settings_env: str) -> None:
-        """Test that status command prints not implemented message."""
-        result = runner.invoke(app, ["status"])
-        assert "not implemented" in result.output.lower()
+    def test_status_displays_rate_limit_panel(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status command displays rate limit information."""
+        with mock.patch("linkedin_scraper.cli.RateLimitDisplay") as mock_display:
+            # Create a mock panel
+            from rich.panel import Panel
+
+            mock_panel = Panel("Rate Limit Info", title="Rate Limit Status")
+            mock_display.return_value.render_status.return_value = mock_panel
+
+            result = runner.invoke(app, ["status"])
+            assert result.exit_code == 0
+            # Should call render_status
+            mock_display.return_value.render_status.assert_called_once()
+
+    def test_status_displays_database_statistics(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status command displays database statistics."""
+        with mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats:
+            mock_stats.return_value = {
+                "total_connections": 150,
+                "unique_companies": 25,
+                "unique_locations": 10,
+                "recent_searches_count": 5,
+                "search_queries": ["engineer", "manager"],
+                "degree_distribution": {1: 100, 2: 40, 3: 10},
+            }
+            result = runner.invoke(app, ["status"])
+            assert result.exit_code == 0
+            # Should display connection stats
+            assert "150" in result.output or "connections" in result.output.lower()
+
+    def test_status_displays_account_list(self, runner: CliRunner, temp_settings_env: str) -> None:
+        """Test that status command displays stored accounts."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = ["default", "work"]
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status"])
+            assert result.exit_code == 0
+            # Should display accounts
+            assert "default" in result.output or "work" in result.output
+
+    def test_status_shows_no_accounts_message(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status shows message when no accounts are stored."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = []
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status"])
+            assert result.exit_code == 0
+            # Should indicate no accounts or show login instruction
+            assert (
+                "no account" in result.output.lower()
+                or "login" in result.output.lower()
+                or "none" in result.output.lower()
+            )
+
+    def test_status_with_account_option_validates_cookie(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that --account option validates the specific account's cookie."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = ["work"]
+            mock_cm.return_value.get_cookie.return_value = "valid_cookie"
+            mock_li.return_value.validate_session.return_value = True
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status", "--account", "work"])
+            assert result.exit_code == 0
+            # Should get cookie for the specified account
+            mock_cm.return_value.get_cookie.assert_called_with("work")
+            # Should validate session
+            mock_li.return_value.validate_session.assert_called_once()
+
+    def test_status_shows_valid_session_message(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status shows valid session message when cookie is valid."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = ["default"]
+            mock_cm.return_value.get_cookie.return_value = "valid_cookie"
+            mock_li.return_value.validate_session.return_value = True
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status", "-a", "default"])
+            assert result.exit_code == 0
+            # Should show valid/active status
+            assert "valid" in result.output.lower() or "active" in result.output.lower()
+
+    def test_status_shows_invalid_session_message(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status shows invalid session message when cookie is expired."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.LinkedInClient") as mock_li,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = ["default"]
+            mock_cm.return_value.get_cookie.return_value = "expired_cookie"
+            mock_li.return_value.validate_session.return_value = False
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status", "-a", "default"])
+            assert result.exit_code == 0
+            # Should show invalid/expired status
+            assert (
+                "invalid" in result.output.lower()
+                or "expired" in result.output.lower()
+                or "not valid" in result.output.lower()
+            )
+
+    def test_status_shows_account_not_found_message(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status shows message when specified account is not found."""
+        with (
+            mock.patch("linkedin_scraper.cli.CookieManager") as mock_cm,
+            mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats,
+        ):
+            mock_cm.return_value.list_accounts.return_value = []
+            mock_cm.return_value.get_cookie.return_value = None
+            mock_stats.return_value = {
+                "total_connections": 0,
+                "unique_companies": 0,
+                "unique_locations": 0,
+                "recent_searches_count": 0,
+                "search_queries": [],
+                "degree_distribution": {},
+            }
+            result = runner.invoke(app, ["status", "-a", "nonexistent"])
+            assert result.exit_code == 0
+            # Should show not found message
+            assert "not found" in result.output.lower() or "no cookie" in result.output.lower()
+
+    def test_status_help_shows_account_option(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status help shows --account option."""
+        result = runner.invoke(app, ["status", "--help"])
+        assert result.exit_code == 0
+        assert "--account" in result.output or "-a" in result.output
+
+    def test_status_displays_degree_distribution(
+        self, runner: CliRunner, temp_settings_env: str
+    ) -> None:
+        """Test that status displays connection degree distribution."""
+        with mock.patch("linkedin_scraper.cli.get_database_stats") as mock_stats:
+            mock_stats.return_value = {
+                "total_connections": 150,
+                "unique_companies": 25,
+                "unique_locations": 10,
+                "recent_searches_count": 5,
+                "search_queries": ["engineer"],
+                "degree_distribution": {1: 100, 2: 40, 3: 10},
+            }
+            result = runner.invoke(app, ["status"])
+            assert result.exit_code == 0
+            # Should display degree info (showing counts or degree labels)
+            assert (
+                "1st" in result.output
+                or "2nd" in result.output
+                or "100" in result.output
+                or "degree" in result.output.lower()
+            )
 
 
 class TestToSAcceptance:
@@ -449,8 +659,13 @@ class TestToSAcceptance:
     ) -> None:
         """Test that app proceeds if user accepts ToS interactively."""
         result = runner.invoke(app, ["status"], input="y\n")
-        # Should proceed to command (showing not implemented)
-        assert "not implemented" in result.output.lower()
+        # Should proceed to command (showing rate limit or database stats)
+        assert (
+            "rate limit" in result.output.lower()
+            or "connections" in result.output.lower()
+            or "database" in result.output.lower()
+            or "accounts" in result.output.lower()
+        )
 
     def test_skips_tos_when_already_accepted(
         self, runner: CliRunner, temp_settings_env: str
@@ -458,6 +673,11 @@ class TestToSAcceptance:
         """Test that ToS prompt is skipped when already accepted."""
         result = runner.invoke(app, ["status"])
         # Should not show ToS prompt, just the command output
-        assert "not implemented" in result.output.lower()
+        assert (
+            "rate limit" in result.output.lower()
+            or "connections" in result.output.lower()
+            or "database" in result.output.lower()
+            or "accounts" in result.output.lower()
+        )
         # Should not ask about acceptance
         assert "do you accept" not in result.output.lower()

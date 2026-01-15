@@ -12,12 +12,14 @@ from rich.table import Table
 from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
 from linkedin_scraper.database import DatabaseService
+from linkedin_scraper.database.stats import get_database_stats
 from linkedin_scraper.linkedin.client import LinkedInClient
 from linkedin_scraper.linkedin.exceptions import (
     LinkedInAuthError,
     LinkedInRateLimitError,
 )
 from linkedin_scraper.models import ConnectionProfile
+from linkedin_scraper.rate_limit.display import RateLimitDisplay
 from linkedin_scraper.rate_limit.exceptions import RateLimitExceeded
 from linkedin_scraper.rate_limit.service import RateLimiter
 from linkedin_scraper.search.filters import NetworkDepth
@@ -374,8 +376,99 @@ def export() -> None:
     console.print("[yellow]Export command not implemented yet.[/yellow]")
 
 
+def _render_database_stats_panel(stats: dict[str, object]) -> Panel:
+    """Render database statistics as a Rich Panel.
+
+    Args:
+        stats: Dictionary of database statistics from get_database_stats.
+
+    Returns:
+        Rich Panel containing formatted database statistics.
+    """
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    table.add_column("Label", style="dim")
+    table.add_column("Value")
+
+    total = stats.get("total_connections", 0)
+    table.add_row("Total Connections:", f"[cyan]{total}[/cyan]")
+
+    companies = stats.get("unique_companies", 0)
+    table.add_row("Unique Companies:", f"[cyan]{companies}[/cyan]")
+
+    locations = stats.get("unique_locations", 0)
+    table.add_row("Unique Locations:", f"[cyan]{locations}[/cyan]")
+
+    searches = stats.get("recent_searches_count", 0)
+    table.add_row("Search Queries:", f"[cyan]{searches}[/cyan]")
+
+    # Degree distribution
+    degree_dist = stats.get("degree_distribution", {})
+    if degree_dist and isinstance(degree_dist, dict):
+        degree_parts = []
+        for degree, count in sorted(degree_dist.items()):
+            degree_label = {1: "1st", 2: "2nd", 3: "3rd"}.get(degree, f"{degree}th")
+            degree_parts.append(f"{degree_label}: {count}")
+        if degree_parts:
+            table.add_row("By Degree:", ", ".join(degree_parts))
+
+    return Panel(
+        table,
+        title="Database Statistics",
+        border_style="blue",
+        padding=(1, 2),
+    )
+
+
+def _render_accounts_panel(
+    accounts: list[str],
+    validation_result: tuple[str, bool] | None = None,
+) -> Panel:
+    """Render stored accounts as a Rich Panel.
+
+    Args:
+        accounts: List of stored account names.
+        validation_result: Optional tuple of (account_name, is_valid) for a validated account.
+
+    Returns:
+        Rich Panel containing formatted account list.
+    """
+    content: str | Table
+    if not accounts:
+        content = "[dim]No accounts stored. Run 'linkedin-scraper login' to add one.[/dim]"
+    else:
+        table = Table(show_header=True, box=None, padding=(0, 1))
+        table.add_column("Account", style="cyan")
+        table.add_column("Status", style="dim")
+
+        for account in accounts:
+            if validation_result and validation_result[0] == account:
+                is_valid = validation_result[1]
+                status_text = "[green]Valid[/green]" if is_valid else "[red]Expired/Invalid[/red]"
+            else:
+                status_text = "[dim]Not checked[/dim]"
+            table.add_row(account, status_text)
+
+        content = table
+
+    return Panel(
+        content,
+        title="Stored Accounts",
+        border_style="magenta",
+        padding=(1, 2),
+    )
+
+
 @app.command()
-def status() -> None:
+def status(
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            "-a",
+            help="Validate and show details for a specific account.",
+        ),
+    ] = None,
+) -> None:
     """Show rate limits and account status.
 
     Display current rate limit usage, stored accounts,
@@ -384,7 +477,47 @@ def status() -> None:
     if not _check_tos_acceptance():
         raise typer.Exit(code=1)
 
-    console.print("[yellow]Status command not implemented yet.[/yellow]")
+    settings = get_settings()
+    db_service = DatabaseService(db_path=settings.db_path)
+    db_service.init_db()
+    cookie_manager = CookieManager()
+
+    # Rate limit status
+    rate_limiter = RateLimiter(db_service, settings)
+    rate_display = RateLimitDisplay(rate_limiter)
+    console.print(rate_display.render_status())
+    console.print()
+
+    # Database statistics
+    stats = get_database_stats(db_service)
+    console.print(_render_database_stats_panel(stats))
+    console.print()
+
+    # Account status
+    accounts = cookie_manager.list_accounts()
+    validation_result: tuple[str, bool] | None = None
+
+    if account:
+        # Validate specific account
+        cookie = cookie_manager.get_cookie(account)
+        if cookie is None:
+            console.print(f"[yellow]Account '{account}' not found. No cookie stored.[/yellow]")
+        else:
+            console.print(f"[dim]Validating session for '{account}'...[/dim]")
+            try:
+                client = LinkedInClient(cookie)
+                is_valid = client.validate_session()
+                validation_result = (account, is_valid)
+                if is_valid:
+                    console.print(f"[green]Session for '{account}' is valid and active.[/green]")
+                else:
+                    console.print(f"[red]Session for '{account}' is expired or not valid.[/red]")
+            except LinkedInAuthError:
+                validation_result = (account, False)
+                console.print(f"[red]Session for '{account}' is expired or not valid.[/red]")
+        console.print()
+
+    console.print(_render_accounts_panel(accounts, validation_result))
 
 
 if __name__ == "__main__":
