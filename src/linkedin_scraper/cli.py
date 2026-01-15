@@ -14,6 +14,8 @@ from linkedin_scraper.auth import CookieManager
 from linkedin_scraper.config import Settings, get_settings
 from linkedin_scraper.database import DatabaseService
 from linkedin_scraper.database.stats import get_database_stats
+from linkedin_scraper.display import ConnectionTable
+from linkedin_scraper.display.status import display_rate_limit_warning
 from linkedin_scraper.export.csv_exporter import CSVExporter
 from linkedin_scraper.linkedin.client import LinkedInClient
 from linkedin_scraper.linkedin.exceptions import (
@@ -212,40 +214,6 @@ def _parse_degrees(degree_str: str) -> list[NetworkDepth]:
     return depths if depths else [NetworkDepth.FIRST, NetworkDepth.SECOND]
 
 
-def _render_results_table(profiles: list[ConnectionProfile]) -> Table:
-    """Render search results as a Rich table.
-
-    Args:
-        profiles: List of ConnectionProfile objects to display.
-
-    Returns:
-        Rich Table with formatted results.
-    """
-    table = Table(title="Search Results", show_lines=False)
-    table.add_column("#", style="dim", width=4)
-    table.add_column("Name", style="cyan", no_wrap=True)
-    table.add_column("Headline", style="white", max_width=40)
-    table.add_column("Location", style="green", max_width=20)
-    table.add_column("Degree", style="yellow", width=6)
-
-    for idx, profile in enumerate(profiles, 1):
-        name = f"{profile.first_name} {profile.last_name}"
-        headline = profile.headline or ""
-        if len(headline) > 40:
-            headline = headline[:37] + "..."
-        location = profile.location or ""
-        if len(location) > 20:
-            location = location[:17] + "..."
-
-        degree_colors = {1: "green", 2: "yellow", 3: "red"}
-        degree_style = degree_colors.get(profile.connection_degree, "white")
-        degree_text = f"[{degree_style}]{profile.connection_degree}[/{degree_style}]"
-
-        table.add_row(str(idx), name, headline, location, degree_text)
-
-    return table
-
-
 @app.command()
 def search(
     keywords: Annotated[
@@ -350,7 +318,8 @@ def search(
 
     # Display results
     if profiles:
-        table = _render_results_table(profiles)
+        connection_table = ConnectionTable()
+        table = connection_table.render(profiles, title="Search Results")
         console.print(table)
         console.print()
         console.print(f"[green]Found {len(profiles)} result(s).[/green]")
@@ -359,10 +328,13 @@ def search(
 
     # Show rate limit status
     remaining = orchestrator.get_remaining_actions()
-    remaining_style = "red" if remaining < 5 else "green"
-    console.print(
-        f"[dim]Remaining searches today: [{remaining_style}]{remaining}[/{remaining_style}][/dim]"
-    )
+    warning_panel = display_rate_limit_warning(remaining)
+    if warning_panel:
+        console.print()
+        console.print(warning_panel)
+    else:
+        msg = f"[dim]Remaining searches today: [green]{remaining}[/green][/dim]"
+        console.print(msg)
 
 
 def _generate_default_export_path() -> Path:
